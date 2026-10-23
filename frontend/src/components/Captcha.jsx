@@ -28,7 +28,7 @@ export default function Captcha({ code, onRefresh, loading = false }) {
       ctx.stroke();
     }
 
-    // Render characters with slight random angle and color
+    // Render characters with slight random angle and high-contrast color
     const chars = code.split('');
     const charWidth = canvas.width / (chars.length + 1);
     ctx.font = 'bold 22px "JetBrains Mono", monospace';
@@ -37,7 +37,7 @@ export default function Captcha({ code, onRefresh, loading = false }) {
       ctx.save();
       const x = (idx + 0.8) * charWidth;
       const y = canvas.height / 2 + 7;
-      const angle = (Math.random() - 0.5) * 0.4;
+      const angle = (Math.random() - 0.5) * 0.35;
 
       ctx.translate(x, y);
       ctx.rotate(angle);
@@ -46,8 +46,8 @@ export default function Captcha({ code, onRefresh, loading = false }) {
       ctx.restore();
     });
 
-    // Random dots
-    for (let i = 0; i < 20; i++) {
+    // Subtle dots
+    for (let i = 0; i < 16; i++) {
       ctx.fillStyle = '#94a3b8';
       ctx.beginPath();
       ctx.arc(Math.random() * canvas.width, Math.random() * canvas.height, 1, 0, Math.PI * 2);
@@ -58,14 +58,22 @@ export default function Captcha({ code, onRefresh, loading = false }) {
   return (
     <div className="flex items-center gap-2">
       <div className="border border-slate-300 rounded-lg overflow-hidden shadow-inner bg-slate-100">
-        <canvas ref={canvasRef} width={150} height={42} className="block" />
+        <canvas
+          ref={canvasRef}
+          width={150}
+          height={42}
+          className="block"
+          role="img"
+          aria-label={code ? `Security verification code: ${code.split('').join(' ')}` : 'Loading security verification code'}
+        />
       </div>
       <button
         type="button"
         onClick={onRefresh}
         disabled={loading}
-        title="Refresh Captcha"
-        className="p-2 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors border border-slate-200"
+        aria-label="Refresh security verification code"
+        title="Refresh security verification code"
+        className="p-2 text-slate-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors border border-slate-300 cursor-pointer"
       >
         <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
       </button>

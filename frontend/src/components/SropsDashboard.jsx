@@ -1,24 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import {
   Heart,
-  Plus,
-  Trash2,
   CheckCircle2,
-  Clock,
   AlertTriangle,
   UploadCloud,
   FileCheck2,
-  Activity,
   UserCheck,
   Stethoscope,
-  ChevronRight,
-  Camera,
   Layers,
-  Thermometer,
   ShieldCheck
 } from 'lucide-react';
-import { fetchCadavers, submitOrganHarvest, fetchHarvestReports, signOrganHarvest } from '../utils/api.js';
+import { fetchCadavers, submitOrganHarvest, fetchHarvestReports, signOrganHarvest, fetchDeadlines } from '../utils/api.js';
 import MultiSigPad from './MultiSigPad.jsx';
+import TimeStatusBadge from './TimeStatusBadge.jsx';
+import TermTooltip from './TermTooltip.jsx';
+
+const MAX_FILE_BYTES = 4 * 1024 * 1024; // 4 MB
 
 export const ORGAN_CODE_MAP = {
   'Heart': '01',
@@ -35,6 +32,7 @@ export default function SropsDashboard({ onOpenExplorer, onOpenDoctors }) {
   const [activeTab, setActiveTab] = useState('harvest'); // 'harvest' or 'reports'
   const [verifiedCadavers, setVerifiedCadavers] = useState([]);
   const [reports, setReports] = useState([]);
+  const [deadlinesMap, setDeadlinesMap] = useState({});
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState(null);
@@ -71,8 +69,12 @@ export default function SropsDashboard({ onOpenExplorer, onOpenDoctors }) {
   async function loadData() {
     setLoading(true);
     try {
-      // 1. Fetch cadavers that are VERIFIED_FOR_EXTRACTION
-      const cRes = await fetchCadavers('VERIFIED_FOR_EXTRACTION');
+      const [cRes, rRes, dRes] = await Promise.all([
+        fetchCadavers('VERIFIED_FOR_EXTRACTION'),
+        fetchHarvestReports(),
+        fetchDeadlines()
+      ]);
+
       if (cRes.success) {
         setVerifiedCadavers(cRes.cadavers);
         if (cRes.cadavers.length > 0 && !selectedCadaver) {
@@ -80,10 +82,17 @@ export default function SropsDashboard({ onOpenExplorer, onOpenDoctors }) {
         }
       }
 
-      // 2. Fetch surgical harvest reports
-      const rRes = await fetchHarvestReports();
       if (rRes.success) {
         setReports(rRes.reports);
+      }
+
+      if (dRes && dRes.success && Array.isArray(dRes.deadlines)) {
+        const map = {};
+        dRes.deadlines.forEach(item => {
+          const key = item.organId || item.recordId || item.reportId;
+          if (key) map[key] = item;
+        });
+        setDeadlinesMap(map);
       }
     } catch (err) {
       console.error(err);
@@ -92,7 +101,7 @@ export default function SropsDashboard({ onOpenExplorer, onOpenDoctors }) {
     }
   }
 
-  // Formula as required:
+  // Formula:
   // First 4 digits: last 4 digits of patient's hex ID
   // Middle 2 digits: organ number (01 for heart, 02 for eye, etc.)
   // Last 4 digits: random numbers
@@ -130,8 +139,7 @@ export default function SropsDashboard({ onOpenExplorer, onOpenDoctors }) {
   function handleOrganChange(index, field, value) {
     setOrgansList(prev => {
       const updated = [...prev];
-      updated[index][field] = value;
-      // Re-calculate organ ID if organ name changed
+      updated[index] = { ...updated[index], [field]: value };
       if (field === 'organName') {
         const cadHex = selectedCadaver ? selectedCadaver.hexId : '0x7A92C4E1';
         updated[index].organId = computeOrganId(cadHex, value);
@@ -141,24 +149,36 @@ export default function SropsDashboard({ onOpenExplorer, onOpenDoctors }) {
   }
 
   function handleOrganImageUpload(index, e) {
-    const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setOrgansList(prev => {
-          const updated = [...prev];
-          updated[index].qaImage = reader.result;
-          return updated;
-        });
-      };
-      reader.readAsDataURL(file);
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+
+    if (file.size > MAX_FILE_BYTES) {
+      setMessage({
+        type: 'error',
+        text: `File "${file.name}" exceeds the 4 MB upload limit. Please select a smaller specimen photo.`
+      });
+      e.target.value = '';
+      return;
     }
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setOrgansList(prev => {
+        const updated = [...prev];
+        updated[index] = { ...updated[index], qaImage: reader.result };
+        return updated;
+      });
+    };
+    reader.readAsDataURL(file);
   }
 
   async function handleSubmitHarvest(e) {
     e.preventDefault();
     if (!selectedCadaver) {
-      alert('Please select a verified cadaver record.');
+      setMessage({
+        type: 'error',
+        text: 'Please select an approved donor record before submitting an organ recovery report.'
+      });
       return;
     }
 
@@ -181,9 +201,9 @@ export default function SropsDashboard({ onOpenExplorer, onOpenDoctors }) {
       if (res.success) {
         setMessage({
           type: 'success',
-          text: `Organ harvest logged for ${organsList.length} organs! Pending 2-of-3 surgical signatures before dispatch to Admin portal.`
+          text: `Organ recovery logged for ${organsList.length} organs! Pending 2 required approvals out of 3 specialists before certification.`
         });
-        loadData();
+        await loadData();
         setActiveTab('reports');
       } else {
         setMessage({ type: 'error', text: res.error || 'Failed to submit harvest report.' });
@@ -199,10 +219,17 @@ export default function SropsDashboard({ onOpenExplorer, onOpenDoctors }) {
     if (!selectedReportForSign) return;
     const res = await signOrganHarvest(selectedReportForSign.reportId, doctorId, pin);
     if (res.success) {
-      loadData();
+      const rRes = await fetchHarvestReports();
+      if (rRes.success) {
+        setReports(rRes.reports);
+        const refreshed = rRes.reports.find(r => r.reportId === selectedReportForSign.reportId);
+        if (refreshed) {
+          setSelectedReportForSign(refreshed);
+        }
+      }
       setMessage({
         type: 'success',
-        text: res.message + (res.isFullyCertified ? ' Certified harvest block mined to blockchain!' : '')
+        text: res.message + (res.isFullyCertified ? ' Certified recovery block sealed on the blockchain!' : '')
       });
     } else {
       throw new Error(res.error || 'Signing failed');
@@ -218,39 +245,43 @@ export default function SropsDashboard({ onOpenExplorer, onOpenDoctors }) {
             🫀
           </div>
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-xl font-bold text-slate-900">
-                Surgical Retrieval & Organ Preservation Suite
+                Surgical Organ Recovery Suite
               </h2>
-              <span className="text-xs font-mono font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
-                SROPS Node
-              </span>
+              <TermTooltip term="SROPS" />
             </div>
-            <p className="text-xs text-slate-500 mt-1">
-              Organ recovery, dynamic multi-organ intake, algorithmic ID token generation, and 2-of-3 surgeon certification.
+            <p className="text-xs text-slate-600 mt-1">
+              Organ retrieval, preservation window tracking (<TermTooltip term="Cold Ischemia" />), and <strong>2 required approvals out of 3 specialists</strong> (<TermTooltip term="2-of-3 Multi-Sig" />).
             </p>
           </div>
         </div>
 
         {/* Tab Controls */}
-        <div className="flex gap-2 bg-slate-100 p-1.5 rounded-xl border border-slate-200 self-start md:self-auto">
+        <div className="flex gap-2 bg-slate-100 p-1.5 rounded-xl border border-slate-200 self-start md:self-auto" role="tablist">
           <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'harvest'}
             onClick={() => setActiveTab('harvest')}
-            className={`px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
+            className={`px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
               activeTab === 'harvest'
-                ? 'bg-white text-amber-700 shadow-sm'
-                : 'text-slate-600 hover:text-slate-900'
+                ? 'bg-white text-amber-800 shadow-sm'
+                : 'text-slate-700 hover:text-slate-900'
             }`}
           >
             <Heart className="w-4 h-4" />
-            Dynamic Harvest Form
+            Organ Recovery Form
           </button>
           <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'reports'}
             onClick={() => setActiveTab('reports')}
-            className={`px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
+            className={`px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
               activeTab === 'reports'
-                ? 'bg-white text-amber-700 shadow-sm'
-                : 'text-slate-600 hover:text-slate-900'
+                ? 'bg-white text-amber-800 shadow-sm'
+                : 'text-slate-700 hover:text-slate-900'
             }`}
           >
             <FileCheck2 className="w-4 h-4" />
@@ -259,13 +290,14 @@ export default function SropsDashboard({ onOpenExplorer, onOpenDoctors }) {
         </div>
       </div>
 
-      {/* Alert message */}
+      {/* Inline status / error message */}
       {message && (
         <div
-          className={`p-4 rounded-xl text-xs flex items-center justify-between border ${
+          role={message.type === 'error' ? 'alert' : 'status'}
+          className={`p-4 rounded-xl text-xs flex items-center justify-between border font-medium ${
             message.type === 'success'
-              ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-              : 'bg-rose-50 text-rose-800 border-rose-200'
+              ? 'bg-emerald-50 text-emerald-900 border-emerald-200'
+              : 'bg-rose-50 text-rose-900 border-rose-200'
           }`}
         >
           <div className="flex items-center gap-2">
@@ -276,7 +308,12 @@ export default function SropsDashboard({ onOpenExplorer, onOpenDoctors }) {
             )}
             <span>{message.text}</span>
           </div>
-          <button onClick={() => setMessage(null)} className="font-bold ml-4">
+          <button
+            type="button"
+            onClick={() => setMessage(null)}
+            aria-label="Dismiss notification"
+            className="font-bold ml-4 px-2 py-0.5 rounded hover:bg-black/5 cursor-pointer"
+          >
             ✕
           </button>
         </div>
@@ -288,31 +325,32 @@ export default function SropsDashboard({ onOpenExplorer, onOpenDoctors }) {
           {/* Step 1: Donor & Cadaver Selection */}
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
             <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider border-b border-slate-200 pb-2 flex items-center gap-2">
-              <UserCheck className="w-4 h-4 text-amber-600" />
-              1. Verified Donor Cadaver Selection (From CIFV Pool)
+              <UserCheck className="w-4 h-4 text-amber-700" />
+              1. Approved Donor Selection (From CIFV Pool)
             </h3>
 
             {verifiedCadavers.length === 0 ? (
-              <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-800 flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 shrink-0" />
+              <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-950 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-amber-700" />
                 <span>
-                  No verified cadavers currently available in the SROPS queue. A cadaver must be verified by 
-                  <strong> 2-of-3 CIFV medical signatures</strong> before surgical organ recovery can begin.
+                  No approved donors are currently available in the SROPS queue. A donor record must receive
+                  <strong> 2 required approvals out of 3 specialists</strong> in CIFV before surgical organ recovery can begin.
                 </span>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Select Verified Cadaver *
+                  <label htmlFor="srops-select-cadaver" className="block text-xs font-semibold text-slate-700 mb-1">
+                    Select Approved Donor *
                   </label>
                   <select
+                    id="srops-select-cadaver"
                     value={selectedCadaver ? selectedCadaver.hexId : ''}
                     onChange={e => {
                       const c = verifiedCadavers.find(item => item.hexId === e.target.value);
                       setSelectedCadaver(c);
                     }}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs font-mono font-bold focus:outline-none"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs font-mono font-bold text-slate-900 focus:outline-none"
                   >
                     {verifiedCadavers.map(cad => (
                       <option key={cad.hexId} value={cad.hexId}>
@@ -323,10 +361,11 @@ export default function SropsDashboard({ onOpenExplorer, onOpenDoctors }) {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  <label htmlFor="srops-donor-name" className="block text-xs font-semibold text-slate-700 mb-1">
                     Donor Name (Prefilled)
                   </label>
                   <input
+                    id="srops-donor-name"
                     type="text"
                     disabled
                     value={selectedCadaver ? selectedCadaver.patientName : ''}
@@ -335,14 +374,15 @@ export default function SropsDashboard({ onOpenExplorer, onOpenDoctors }) {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 mb-1">
-                    Cadaver Unique Hex ID (Prefilled)
+                  <label htmlFor="srops-donor-hex" className="block text-xs font-semibold text-slate-700 mb-1">
+                    Donor Unique Hex ID (Prefilled)
                   </label>
                   <input
+                    id="srops-donor-hex"
                     type="text"
                     disabled
                     value={selectedCadaver ? selectedCadaver.hexId : ''}
-                    className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-lg text-xs font-mono font-bold text-blue-700"
+                    className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-lg text-xs font-mono font-bold text-blue-800"
                   />
                 </div>
               </div>
@@ -350,45 +390,48 @@ export default function SropsDashboard({ onOpenExplorer, onOpenDoctors }) {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 pt-2">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                <label htmlFor="srops-arrival-date" className="block text-xs font-semibold text-slate-700 mb-1">
                   Arrival Date at Surgical Suite *
                 </label>
                 <input
+                  id="srops-arrival-date"
                   type="date"
                   required
                   value={arrivalDate}
                   onChange={e => setArrivalDate(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:outline-none"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs text-slate-900 focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                <label htmlFor="srops-arrival-time" className="block text-xs font-semibold text-slate-700 mb-1">
                   Arrival Time at Surgical Suite *
                 </label>
                 <input
+                  id="srops-arrival-time"
                   type="time"
                   required
                   value={arrivalTime}
                   onChange={e => setArrivalTime(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:outline-none"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs text-slate-900 focus:outline-none"
                 />
               </div>
 
               {/* DYNAMIC TOTAL ORGANS EXTRACTED (N) */}
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Total Number of Organs Extracted (N) *
+                <label htmlFor="srops-total-organs" className="block text-xs font-semibold text-slate-700 mb-1">
+                  Total Number of Organs Recovered (N) *
                 </label>
                 <div className="flex items-center gap-2">
                   <select
+                    id="srops-total-organs"
                     value={totalOrgans}
                     onChange={e => setTotalOrgans(parseInt(e.target.value, 10))}
-                    className="w-full px-3 py-2 bg-amber-50 border border-amber-300 rounded-lg text-xs font-bold text-amber-900 focus:outline-none"
+                    className="w-full px-3 py-2 bg-amber-50 border border-amber-300 rounded-lg text-xs font-bold text-amber-950 focus:outline-none"
                   >
                     {[1, 2, 3, 4, 5, 6, 7, 8].map(num => (
                       <option key={num} value={num}>
-                        {num} {num === 1 ? 'Organ' : 'Organs'} Extracted
+                        {num} {num === 1 ? 'Organ' : 'Organs'} Recovered
                       </option>
                     ))}
                   </select>
@@ -399,206 +442,230 @@ export default function SropsDashboard({ onOpenExplorer, onOpenDoctors }) {
 
           {/* Step 2: Dynamic Organ Cards Based on Total Organs Chosen */}
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
-                <Layers className="w-4 h-4 text-amber-600" />
-                2. Dynamic Harvested Organ Slots ({organsList.length} Generated)
+                <Layers className="w-4 h-4 text-amber-700" />
+                2. Recovered Organ Slots ({organsList.length} Generated)
               </h3>
-              <span className="text-xs text-slate-500">
-                Formula: [Last 4 Hex] - [Organ Code 01..08] - [4 Random Digits]
+              <span className="text-xs text-slate-600 font-mono">
+                ID Format: [Last 4 Hex] - [Organ Code 01..08] - [4 Random Digits]
               </span>
             </div>
 
             <div className="space-y-4">
-              {organsList.map((org, index) => (
-                <div
-                  key={index}
-                  className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4 relative"
-                >
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
-                    <div className="flex items-center gap-2.5">
-                      <span className="w-7 h-7 rounded-xl bg-amber-500 text-white font-bold text-xs flex items-center justify-center shadow-sm">
-                        #{org.slot}
-                      </span>
-                      <h4 className="text-sm font-bold text-slate-800">
-                        Organ #{org.slot}: {org.organName}
-                      </h4>
+              {organsList.map((org, index) => {
+                const startIso = org.extractionDate && org.extractionTime
+                  ? `${org.extractionDate}T${org.extractionTime}`
+                  : null;
+
+                return (
+                  <div
+                    key={index}
+                    className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4 relative"
+                  >
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                      <div className="flex flex-wrap items-center gap-2.5">
+                        <span className="w-7 h-7 rounded-xl bg-amber-600 text-white font-bold text-xs flex items-center justify-center shadow-sm">
+                          #{org.slot}
+                        </span>
+                        <h4 className="text-sm font-bold text-slate-800">
+                          Organ #{org.slot}: {org.organName}
+                        </h4>
+                        <TimeStatusBadge
+                          organName={org.organName}
+                          startTime={startIso}
+                          stage="HARVEST"
+                        />
+                      </div>
+
+                      {/* Auto Generated Organ ID Badge */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-slate-600 uppercase font-mono">ORGAN ID:</span>
+                        <span className="font-mono font-bold text-xs bg-slate-900 text-amber-300 px-3 py-1 rounded-lg shadow-sm border border-slate-700">
+                          {org.organId}
+                        </span>
+                      </div>
                     </div>
 
-                    {/* Auto Generated Organ ID Badge */}
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-slate-500 uppercase font-mono">AUTOGENERATED ID:</span>
-                      <span className="font-mono font-bold text-xs bg-slate-900 text-amber-300 px-3 py-1 rounded-lg shadow-sm border border-slate-700">
-                        {org.organId}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-700 mb-1">
-                        Organ Name / Category *
-                      </label>
-                      <select
-                        value={org.organName}
-                        onChange={e => handleOrganChange(index, 'organName', e.target.value)}
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs font-semibold focus:outline-none"
-                      >
-                        {Object.keys(ORGAN_CODE_MAP).map(k => (
-                          <option key={k} value={k}>
-                            {k} (Code: {ORGAN_CODE_MAP[k]})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-700 mb-1">
-                        Organ Viability / Condition *
-                      </label>
-                      <select
-                        value={org.condition}
-                        onChange={e => handleOrganChange(index, 'condition', e.target.value)}
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:outline-none"
-                      >
-                        <option value="Viable - Grade A (Optimal)">Grade A (Optimal - No Atherosclerosis)</option>
-                        <option value="Viable - Grade B (Marginal)">Grade B (Marginal - Suitable with perfusion)</option>
-                        <option value="Under Evaluation">Under Pulsatile Perfusion Evaluation</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-700 mb-1">
-                        Harvest / Cross-Clamp Date *
-                      </label>
-                      <input
-                        type="date"
-                        value={org.extractionDate}
-                        onChange={e => handleOrganChange(index, 'extractionDate', e.target.value)}
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-700 mb-1">
-                        Cross-Clamp Timestamp *
-                      </label>
-                      <input
-                        type="time"
-                        value={org.extractionTime}
-                        onChange={e => handleOrganChange(index, 'extractionTime', e.target.value)}
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:outline-none"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-700 mb-1">
-                        Preservation Solution
-                      </label>
-                      <input
-                        type="text"
-                        value={org.preservationSolution}
-                        onChange={e => handleOrganChange(index, 'preservationSolution', e.target.value)}
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-700 mb-1">
-                        Storage Temperature
-                      </label>
-                      <input
-                        type="text"
-                        value={org.storageTemperature}
-                        onChange={e => handleOrganChange(index, 'storageTemperature', e.target.value)}
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:outline-none"
-                      />
-                    </div>
-
-                    {/* QA Image Upload for this specific organ */}
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-700 mb-1">
-                        QA Specimen Photo Upload
-                      </label>
-                      {org.qaImage ? (
-                        <div className="flex items-center gap-2">
-                          <img
-                            src={org.qaImage}
-                            alt="Organ QA"
-                            className="h-10 w-16 object-cover rounded-lg border border-slate-200"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => handleOrganChange(index, 'qaImage', '')}
-                            className="text-rose-600 text-xs hover:underline font-semibold"
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      ) : (
-                        <label className="cursor-pointer border border-dashed border-slate-300 rounded-lg px-3 py-2 flex items-center justify-center gap-1.5 text-xs text-blue-600 hover:bg-slate-50">
-                          <UploadCloud className="w-4 h-4 text-slate-400" />
-                          <span>Upload Organ Photo</span>
-                          <input
-                            type="file"
-                            accept="image/*"
-                            onChange={e => handleOrganImageUpload(index, e)}
-                            className="hidden"
-                          />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+                      <div>
+                        <label htmlFor={`srops-organ-name-${index}`} className="block text-xs font-semibold text-slate-700 mb-1">
+                          Organ Name / Category *
                         </label>
-                      )}
+                        <select
+                          id={`srops-organ-name-${index}`}
+                          value={org.organName}
+                          onChange={e => handleOrganChange(index, 'organName', e.target.value)}
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs font-semibold text-slate-900 focus:outline-none"
+                        >
+                          {Object.keys(ORGAN_CODE_MAP).map(k => (
+                            <option key={k} value={k}>
+                              {k} (Code: {ORGAN_CODE_MAP[k]})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label htmlFor={`srops-organ-cond-${index}`} className="block text-xs font-semibold text-slate-700 mb-1">
+                          Organ Viability / Condition *
+                        </label>
+                        <select
+                          id={`srops-organ-cond-${index}`}
+                          value={org.condition}
+                          onChange={e => handleOrganChange(index, 'condition', e.target.value)}
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs text-slate-900 focus:outline-none"
+                        >
+                          <option value="Viable - Grade A (Optimal)">Grade A (Optimal - No Atherosclerosis)</option>
+                          <option value="Viable - Grade B (Marginal)">Grade B (Marginal - Suitable with perfusion)</option>
+                          <option value="Under Evaluation">Under Pulsatile Perfusion Evaluation</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label htmlFor={`srops-organ-date-${index}`} className="block text-xs font-semibold text-slate-700 mb-1">
+                          Recovery / Cross-Clamp Date *
+                        </label>
+                        <input
+                          id={`srops-organ-date-${index}`}
+                          type="date"
+                          value={org.extractionDate}
+                          onChange={e => handleOrganChange(index, 'extractionDate', e.target.value)}
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs text-slate-900 focus:outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label htmlFor={`srops-organ-time-${index}`} className="block text-xs font-semibold text-slate-700 mb-1">
+                          Cross-Clamp Timestamp *
+                        </label>
+                        <input
+                          id={`srops-organ-time-${index}`}
+                          type="time"
+                          value={org.extractionTime}
+                          onChange={e => handleOrganChange(index, 'extractionTime', e.target.value)}
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs text-slate-900 focus:outline-none"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-1">
+                      <div>
+                        <label htmlFor={`srops-organ-sol-${index}`} className="block text-xs font-semibold text-slate-700 mb-1">
+                          Preservation Solution
+                        </label>
+                        <input
+                          id={`srops-organ-sol-${index}`}
+                          type="text"
+                          value={org.preservationSolution}
+                          onChange={e => handleOrganChange(index, 'preservationSolution', e.target.value)}
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs text-slate-900 focus:outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label htmlFor={`srops-organ-temp-${index}`} className="block text-xs font-semibold text-slate-700 mb-1">
+                          Storage Temperature
+                        </label>
+                        <input
+                          id={`srops-organ-temp-${index}`}
+                          type="text"
+                          value={org.storageTemperature}
+                          onChange={e => handleOrganChange(index, 'storageTemperature', e.target.value)}
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs text-slate-900 focus:outline-none"
+                        />
+                      </div>
+
+                      {/* QA Image Upload for this specific organ */}
+                      <div>
+                        <span className="block text-xs font-semibold text-slate-700 mb-1">
+                          QA Specimen Photo Upload (≤ 4 MB)
+                        </span>
+                        {org.qaImage ? (
+                          <div className="flex items-center gap-2">
+                            <img
+                              src={org.qaImage}
+                              alt={`Organ #${org.slot} QA specimen`}
+                              className="h-10 w-16 object-cover rounded-lg border border-slate-200"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleOrganChange(index, 'qaImage', '')}
+                              className="text-rose-700 text-xs hover:underline font-semibold cursor-pointer"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ) : (
+                          <label
+                            htmlFor={`srops-organ-photo-${index}`}
+                            className="cursor-pointer border border-dashed border-slate-300 rounded-lg px-3 py-2 flex items-center justify-center gap-1.5 text-xs text-blue-700 font-semibold hover:bg-slate-50 focus-within:ring-2 focus-within:ring-blue-600"
+                          >
+                            <input
+                              id={`srops-organ-photo-${index}`}
+                              type="file"
+                              accept="image/*"
+                              onChange={e => handleOrganImageUpload(index, e)}
+                              className="sr-only peer"
+                            />
+                            <UploadCloud className="w-4 h-4 text-slate-500 peer-focus-visible:text-blue-600" />
+                            <span>Upload Organ Photo</span>
+                          </label>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 
           {/* Step 3: Operating Surgical Team */}
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
             <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider border-b border-slate-200 pb-2 flex items-center gap-2">
-              <Stethoscope className="w-4 h-4 text-amber-600" />
+              <Stethoscope className="w-4 h-4 text-amber-700" />
               3. Operating Retrieval Surgical Team
             </h3>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                <label htmlFor="srops-surgeons-count" className="block text-xs font-semibold text-slate-700 mb-1">
                   Number of Surgeons / Specialists *
                 </label>
                 <input
+                  id="srops-surgeons-count"
                   type="number"
                   value={surgeonsCount}
                   onChange={e => setSurgeonsCount(parseInt(e.target.value, 10) || 1)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:outline-none"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs text-slate-900 focus:outline-none"
                 />
               </div>
 
               <div className="md:col-span-2">
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Operating Surgeons Names & Medical Registration IDs *
+                <label htmlFor="srops-surgeons-list" className="block text-xs font-semibold text-slate-700 mb-1">
+                  Operating Surgeons Names &amp; Medical Registration IDs *
                 </label>
                 <input
+                  id="srops-surgeons-list"
                   type="text"
                   required
                   value={surgeonsList}
                   onChange={e => setSurgeonsList(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:outline-none"
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs text-slate-900 focus:outline-none"
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Post-Harvest Surgical Notes & Perfusion Observations
+              <label htmlFor="srops-surgical-notes" className="block text-xs font-semibold text-slate-700 mb-1">
+                Post-Recovery Surgical Notes &amp; Perfusion Observations
               </label>
               <textarea
+                id="srops-surgical-notes"
                 rows={2}
                 value={surgicalNotes}
                 onChange={e => setSurgicalNotes(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs focus:outline-none"
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-xs text-slate-900 focus:outline-none"
               />
             </div>
           </div>
@@ -611,7 +678,7 @@ export default function SropsDashboard({ onOpenExplorer, onOpenDoctors }) {
               className="py-3 px-6 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-700 hover:to-orange-700 text-white rounded-xl text-xs font-bold uppercase tracking-wider shadow-md hover:shadow-lg transition-all flex items-center gap-2 cursor-pointer disabled:opacity-60"
             >
               <Heart className="w-4 h-4" />
-              {submitting ? 'Committing to Ledger...' : 'Generate Surgical Harvest Dossier'}
+              {submitting ? 'Committing to Ledger...' : 'Generate Surgical Recovery Dossier'}
             </button>
           </div>
         </form>
@@ -621,22 +688,22 @@ export default function SropsDashboard({ onOpenExplorer, onOpenDoctors }) {
       {activeTab === 'reports' && (
         <div className="space-y-4">
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
-            <span className="text-slate-600">
-              Showing all <strong>{reports.length}</strong> surgical extraction reports on the SROPS ledger.
+            <span className="text-slate-700">
+              Showing all <strong>{reports.length}</strong> surgical organ recovery reports on the SROPS ledger.
             </span>
-            <span className="text-amber-800 bg-amber-100 px-2.5 py-1 rounded-full font-medium border border-amber-200">
-              Mandatory Rule: 2-of-3 SROPS Surgeon Signatures required before pushing to Central Admin.
+            <span className="text-amber-900 bg-amber-100 px-2.5 py-1 rounded-full font-semibold border border-amber-300">
+              Mandatory Rule: 2 required approvals out of 3 specialists before certification.
             </span>
           </div>
 
           {loading ? (
-            <div className="text-center py-16 text-slate-500 text-xs">Loading reports...</div>
+            <div className="text-center py-16 text-slate-600 text-xs">Loading reports...</div>
           ) : reports.length === 0 ? (
             <div className="text-center py-16 bg-white rounded-2xl border border-slate-200 space-y-2">
               <span className="text-3xl">🫀</span>
-              <p className="text-sm font-bold text-slate-700">No surgical harvest reports logged yet.</p>
-              <p className="text-xs text-slate-500">
-                Fill the Dynamic Harvest Form above to log organ retrieval.
+              <p className="text-sm font-bold text-slate-700">No surgical recovery reports logged yet.</p>
+              <p className="text-xs text-slate-600">
+                Complete the Organ Recovery Form to log recovered organs.
               </p>
             </div>
           ) : (
@@ -652,66 +719,83 @@ export default function SropsDashboard({ onOpenExplorer, onOpenDoctors }) {
                   >
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
                       <div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <span className="font-mono font-bold text-sm text-slate-900">
                             {rep.reportId}
                           </span>
-                          <span className="text-xs bg-slate-100 text-blue-800 font-mono px-2 py-0.5 rounded border border-slate-200">
+                          <span className="text-xs bg-slate-100 text-blue-900 font-mono px-2 py-0.5 rounded border border-slate-200">
                             Donor Hex: {rep.cadaverHexId}
                           </span>
                         </div>
-                        <p className="text-xs text-slate-600 mt-1">
-                          Donor: <strong>{rep.patientName}</strong> | Harvested: <strong>{rep.totalOrgansExtracted} Organs</strong>
+                        <p className="text-xs text-slate-700 mt-1">
+                          Donor: <strong>{rep.patientName}</strong> | Recovered: <strong>{rep.totalOrgansExtracted} Organs</strong>
                         </p>
                       </div>
 
                       <div className="flex items-center gap-2">
                         <span
-                          className={`text-[10px] font-bold uppercase px-2.5 py-1 rounded-full border ${
+                          className={`text-xs font-bold uppercase px-2.5 py-1 rounded-full border ${
                             isCertified
                               ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
                               : 'bg-amber-100 text-amber-800 border-amber-300'
                           }`}
                         >
-                          {isCertified ? 'CERTIFIED & MINED' : 'PENDING 2-OF-3 SURGEON SIGNATURES'}
+                          {isCertified ? 'CERTIFIED & ON-CHAIN' : `${sigCount} OF 2 REQUIRED APPROVALS`}
                         </span>
                       </div>
                     </div>
 
                     {/* Harvested Organ Cards Grid */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                      {rep.organs.map((org, oIdx) => (
-                        <div
-                          key={oIdx}
-                          className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-1"
-                        >
-                          <div className="flex items-center justify-between">
-                            <strong className="text-slate-800">{org.organName}</strong>
-                            <span className="text-[10px] font-mono bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded font-bold">
-                              {org.organId}
-                            </span>
+                      {rep.organs.map((org, oIdx) => {
+                        const deadlineEntry = deadlinesMap[org.organId] || org.deadlineStatus || null;
+                        const startIso = org.extractionDate && org.extractionTime
+                          ? `${org.extractionDate}T${org.extractionTime}`
+                          : rep.createdAt;
+
+                        return (
+                          <div
+                            key={oIdx}
+                            className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-1.5"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <strong className="text-slate-900">{org.organName}</strong>
+                              <span className="text-xs font-mono bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded font-bold border border-amber-200">
+                                {org.organId}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-700">{org.condition}</p>
+                            <p className="text-xs text-slate-600">
+                              Clamp Time: {org.extractionTime} ({org.extractionDate})
+                            </p>
+                            <div className="pt-1">
+                              <TimeStatusBadge
+                                deadlineData={deadlineEntry}
+                                organName={org.organName}
+                                startTime={startIso}
+                                stage="HARVEST"
+                              />
+                            </div>
                           </div>
-                          <p className="text-[11px] text-slate-500">{org.condition}</p>
-                          <p className="text-[11px] text-slate-500">
-                            Clamp Time: {org.extractionTime} ({org.extractionDate})
-                          </p>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
 
                     {/* Multi-Signature Status */}
                     <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
                       <div>
                         <div className="flex items-center gap-2">
-                          <span className="font-semibold text-slate-700">Surgeon Signatures:</span>
-                          <span className="font-mono font-bold text-blue-700">{sigCount} of 3</span>
+                          <span className="font-semibold text-slate-700">Surgeon Approvals:</span>
+                          <span className="font-mono font-bold text-blue-800">
+                            {sigCount} of 2 required approvals (out of 3 specialists)
+                          </span>
                         </div>
                         {rep.signatures && rep.signatures.length > 0 && (
                           <div className="flex flex-wrap gap-2 mt-1.5">
                             {rep.signatures.map((s, idx) => (
                               <span
                                 key={idx}
-                                className="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-medium border border-emerald-200"
+                                className="text-xs bg-emerald-100 text-emerald-900 px-2.5 py-0.5 rounded font-medium border border-emerald-200"
                               >
                                 ✓ {s.doctorName} ({s.doctorId})
                               </span>
@@ -722,6 +806,7 @@ export default function SropsDashboard({ onOpenExplorer, onOpenDoctors }) {
 
                       {!isCertified && (
                         <button
+                          type="button"
                           onClick={() => {
                             setSelectedReportForSign(rep);
                             setSigningModalOpen(true);
@@ -729,14 +814,14 @@ export default function SropsDashboard({ onOpenExplorer, onOpenDoctors }) {
                           className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer shrink-0"
                         >
                           <ShieldCheck className="w-4 h-4" />
-                          <span>Surgeon Sign (2-of-3)</span>
+                          <span>Approve Recovery ({sigCount}/2)</span>
                         </button>
                       )}
 
                       {isCertified && (
                         <span className="text-xs font-semibold text-emerald-700 flex items-center gap-1 shrink-0">
                           <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                          Dispatched to Admin Portal
+                          Certified &amp; Dispatched to Admin Portal
                         </span>
                       )}
                     </div>
@@ -758,7 +843,7 @@ export default function SropsDashboard({ onOpenExplorer, onOpenDoctors }) {
           }}
           department="SROPS"
           recordId={selectedReportForSign.reportId}
-          recordTitle={`Organ Harvest (${selectedReportForSign.totalOrgansExtracted} Organs) - Donor Hex: ${selectedReportForSign.cadaverHexId}`}
+          recordTitle={`Organ Recovery (${selectedReportForSign.totalOrgansExtracted} Organs) - Donor Hex: ${selectedReportForSign.cadaverHexId}`}
           existingSignatures={selectedReportForSign.signatures || []}
           onSignSubmit={handleExecuteSign}
         />

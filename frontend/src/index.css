@@ -2,12 +2,47 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  /* Brand & Clinical Surfaces */
+  --color-bg-app: #f1f5f9;          /* slate-100 */
+  --color-surface: #ffffff;         /* white */
+  --color-surface-subtle: #f8fafc;  /* slate-50 */
+  --color-border: #e2e8f0;          /* slate-200 */
+
+  /* Accessible Typography (WCAG AA on white & slate-50) */
+  --color-text-primary: #0f172a;    /* slate-900 (17.4:1) */
+  --color-text-secondary: #334155;  /* slate-700 (10.3:1) */
+  --color-text-muted: #475569;      /* slate-600 (7.0:1) */
+
+  /* Role Accent Tokens */
+  --color-role-cifv: #0e7490;       /* cyan-700 */
+  --color-role-srops: #b45309;      /* amber-700 */
+  --color-role-admin: #6d28d9;      /* purple-700 */
+
+  /* Time-Status & Clinical Urgency Tokens */
+  --color-status-green-bg: #ecfdf5; /* emerald-50 */
+  --color-status-green-fg: #065f46; /* emerald-800 */
+  --color-status-amber-bg: #fffbeb; /* amber-50 */
+  --color-status-amber-fg: #92400e; /* amber-800 */
+  --color-status-red-bg: #fff1f2;   /* rose-50 */
+  --color-status-red-fg: #9f1239;   /* rose-800 */
+}
+
 @layer base {
   body {
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    color: var(--color-text-primary);
+    background-color: var(--color-bg-app);
   }
   code, pre, .font-mono {
     font-family: 'JetBrains Mono', monospace;
+  }
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: 2px;
   }
 }
 

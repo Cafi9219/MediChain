@@ -10,7 +10,8 @@ import {
   Stethoscope
 } from 'lucide-react';
 import TermTooltip from './TermTooltip.jsx';
-import { fetchAdminOverview, fetchCadavers, fetchOrgansList, fetchHarvestReports } from '../utils/api.js';
+import TimeStatusBadge from './TimeStatusBadge.jsx';
+import { fetchAdminOverview, fetchCadavers, fetchOrgansList, fetchHarvestReports, fetchDeadlines } from '../utils/api.js';
 
 export default function AdminDashboard({ onOpenExplorer, onOpenDoctors }) {
   const [activeTab, setActiveTab] = useState('overview'); // 'overview', 'personnel', 'organs', 'cadavers'
@@ -18,6 +19,7 @@ export default function AdminDashboard({ onOpenExplorer, onOpenDoctors }) {
   const [cadavers, setCadavers] = useState([]);
   const [organs, setOrgans] = useState([]);
   const [harvestReports, setHarvestReports] = useState([]);
+  const [deadlinesMap, setDeadlinesMap] = useState({});
   const [loading, setLoading] = useState(true);
 
   // Certificate / Print Modal
@@ -41,17 +43,26 @@ export default function AdminDashboard({ onOpenExplorer, onOpenDoctors }) {
   async function loadAllData() {
     setLoading(true);
     try {
-      const [overviewRes, cadRes, orgRes, repRes] = await Promise.all([
+      const [overviewRes, cadRes, orgRes, repRes, dRes] = await Promise.all([
         fetchAdminOverview(),
         fetchCadavers(),
         fetchOrgansList(),
-        fetchHarvestReports()
+        fetchHarvestReports(),
+        fetchDeadlines()
       ]);
 
       if (overviewRes.success) setAdminData(overviewRes);
       if (cadRes.success) setCadavers(cadRes.cadavers);
       if (orgRes.success) setOrgans(orgRes.organs);
       if (repRes.success) setHarvestReports(repRes.reports);
+      if (dRes && dRes.success && Array.isArray(dRes.deadlines)) {
+        const map = {};
+        dRes.deadlines.forEach(item => {
+          const key = item.organId || item.recordId || item.hexId;
+          if (key) map[key] = item;
+        });
+        setDeadlinesMap(map);
+      }
     } catch (err) {
       console.error(err);
     } finally {
@@ -418,57 +429,73 @@ export default function AdminDashboard({ onOpenExplorer, onOpenDoctors }) {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {organs.map((org, idx) => (
-                <div
-                  key={idx}
-                  className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 flex flex-col justify-between space-y-3 hover:shadow-md transition-shadow"
-                >
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="font-mono font-bold text-xs bg-slate-900 text-amber-300 px-2.5 py-1 rounded-lg border border-slate-700">
-                        {org.organId}
-                      </span>
-                      <span className="text-xs uppercase font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
-                        {org.harvestStatus}
-                      </span>
+              {organs.map((org, idx) => {
+                const deadlineEntry = deadlinesMap[org.organId] || org.deadlineStatus || null;
+                const startIso = org.extractionDate && org.extractionTime
+                  ? `${org.extractionDate}T${org.extractionTime}`
+                  : org.certifiedAt;
+
+                return (
+                  <div
+                    key={idx}
+                    className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 flex flex-col justify-between space-y-3 hover:shadow-md transition-shadow"
+                  >
+                    <div>
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                        <span className="font-mono font-bold text-xs bg-slate-900 text-amber-300 px-2.5 py-1 rounded-lg border border-slate-700">
+                          {org.organId}
+                        </span>
+                        <span className="text-xs uppercase font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
+                          {org.harvestStatus}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2">
+                        <h4 className="text-sm font-bold text-slate-900">{org.organName}</h4>
+                        <TimeStatusBadge
+                          deadlineData={deadlineEntry}
+                          organName={org.organName}
+                          startTime={startIso}
+                          stage="HARVEST"
+                        />
+                      </div>
+
+                      <p className="text-xs text-slate-700 mt-1">
+                        Donor: <strong>{org.patientName}</strong> (Hex: {org.cadaverHexId})
+                      </p>
+
+                      <div className="mt-3 space-y-1 text-xs text-slate-600 bg-slate-50 p-2.5 rounded-xl">
+                        <p>
+                          <span>Condition: </span>
+                          <strong className="text-slate-800">{org.condition}</strong>
+                        </p>
+                        <p>
+                          <span>Clamp Time: </span>
+                          <strong className="text-slate-800">{org.extractionTime} ({org.extractionDate})</strong>
+                        </p>
+                        <p>
+                          <span>Preservation: </span>
+                          <span className="text-slate-700">{org.preservationSolution}</span>
+                        </p>
+                      </div>
                     </div>
 
-                    <h4 className="text-sm font-bold text-slate-900">{org.organName}</h4>
-                    <p className="text-xs text-slate-700 mt-0.5">
-                      Donor: <strong>{org.patientName}</strong> (Hex: {org.cadaverHexId})
-                    </p>
-
-                    <div className="mt-3 space-y-1 text-xs text-slate-600 bg-slate-50 p-2.5 rounded-xl">
-                      <p>
-                        <span>Condition: </span>
-                        <strong className="text-slate-800">{org.condition}</strong>
-                      </p>
-                      <p>
-                        <span>Clamp Time: </span>
-                        <strong className="text-slate-800">{org.extractionTime} ({org.extractionDate})</strong>
-                      </p>
-                      <p>
-                        <span>Preservation: </span>
-                        <span className="text-slate-700">{org.preservationSolution}</span>
-                      </p>
+                    <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                      <span className="text-xs text-slate-600 font-mono">
+                        Report: {org.reportId}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedItemForCert(org)}
+                        className="text-xs font-semibold text-purple-700 hover:text-purple-900 flex items-center gap-1 cursor-pointer"
+                      >
+                        <Printer className="w-3.5 h-3.5" />
+                        Print Certificate
+                      </button>
                     </div>
                   </div>
-
-                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-                    <span className="text-xs text-slate-600 font-mono">
-                      Report: {org.reportId}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedItemForCert(org)}
-                      className="text-xs font-semibold text-purple-700 hover:text-purple-900 flex items-center gap-1 cursor-pointer"
-                    >
-                      <Printer className="w-3.5 h-3.5" />
-                      Print Certificate
-                    </button>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -482,51 +509,65 @@ export default function AdminDashboard({ onOpenExplorer, onOpenDoctors }) {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {cadavers.map(cad => (
-              <div
-                key={cad.hexId}
-                className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 flex flex-col justify-between space-y-3 hover:shadow-md transition-shadow"
-              >
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="font-mono font-bold text-sm bg-slate-100 text-blue-900 px-2.5 py-1 rounded-lg border border-slate-200">
-                      {cad.hexId}
-                    </span>
-                    <span className="text-xs font-bold uppercase px-2 py-0.5 rounded-full bg-slate-100 text-slate-800">
-                      {cad.status}
-                    </span>
+            {cadavers.map(cad => {
+              const deadlineEntry = deadlinesMap[cad.hexId] || cad.deadlineStatus || null;
+              const startIso = cad.arrivalDate && cad.arrivalTime
+                ? `${cad.arrivalDate}T${cad.arrivalTime}`
+                : cad.createdAt;
+
+              return (
+                <div
+                  key={cad.hexId}
+                  className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 flex flex-col justify-between space-y-3 hover:shadow-md transition-shadow"
+                >
+                  <div>
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                      <span className="font-mono font-bold text-sm bg-slate-100 text-blue-900 px-2.5 py-1 rounded-lg border border-slate-200">
+                        {cad.hexId}
+                      </span>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <TimeStatusBadge
+                          deadlineData={deadlineEntry}
+                          startTime={startIso}
+                          stage="INTAKE"
+                        />
+                        <span className="text-xs font-bold uppercase px-2 py-0.5 rounded-full bg-slate-100 text-slate-800 border border-slate-200">
+                          {cad.status}
+                        </span>
+                      </div>
+                    </div>
+
+                    <h4 className="text-base font-bold text-slate-900">
+                      {cad.patientName} ({cad.age}y, {cad.gender})
+                    </h4>
+                    <p className="text-xs text-slate-700 mt-1">
+                      Cause: {cad.causeOfDeath}
+                    </p>
+
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600 bg-slate-50 p-2.5 rounded-xl">
+                      <p>Blood: <strong className="text-slate-800 font-mono">{cad.bloodGroup}</strong></p>
+                      <p>Death: <strong className="text-slate-800">{cad.deathDate} {cad.deathTime}</strong></p>
+                      <p>Arrival: <span className="text-slate-700">{cad.arrivalDate} {cad.arrivalTime}</span></p>
+                      <p>Eligible: <strong className="text-emerald-700">{cad.isAppropriateForHarvesting ? 'Yes' : 'No'}</strong></p>
+                    </div>
                   </div>
 
-                  <h4 className="text-base font-bold text-slate-900">
-                    {cad.patientName} ({cad.age}y, {cad.gender})
-                  </h4>
-                  <p className="text-xs text-slate-700 mt-1">
-                    Cause: {cad.causeOfDeath}
-                  </p>
-
-                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-600 bg-slate-50 p-2.5 rounded-xl">
-                    <p>Blood: <strong className="text-slate-800 font-mono">{cad.bloodGroup}</strong></p>
-                    <p>Death: <strong className="text-slate-800">{cad.deathDate} {cad.deathTime}</strong></p>
-                    <p>Arrival: <span className="text-slate-700">{cad.arrivalDate} {cad.arrivalTime}</span></p>
-                    <p>Eligible: <strong className="text-emerald-700">{cad.isAppropriateForHarvesting ? 'Yes' : 'No'}</strong></p>
+                  <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+                    <span className="text-xs text-slate-600 font-mono">
+                      Approvals: {cad.signatures ? cad.signatures.length : 0} of 2 required (out of 3 specialists)
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedItemForCert(cad)}
+                      className="text-xs font-semibold text-purple-700 hover:text-purple-900 flex items-center gap-1 cursor-pointer"
+                    >
+                      <Printer className="w-3.5 h-3.5" />
+                      Official Dossier
+                    </button>
                   </div>
                 </div>
-
-                <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
-                  <span className="text-xs text-slate-600 font-mono">
-                    Approvals: {cad.signatures ? cad.signatures.length : 0} of 2 required (out of 3 specialists)
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedItemForCert(cad)}
-                    className="text-xs font-semibold text-purple-700 hover:text-purple-900 flex items-center gap-1 cursor-pointer"
-                  >
-                    <Printer className="w-3.5 h-3.5" />
-                    Official Dossier
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
