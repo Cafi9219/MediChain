@@ -1,0 +1,129 @@
+{
+  "chain": [
+    {
+      "index": 0,
+      "timestamp": "2026-09-16T11:39:56.628Z",
+      "previousHash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "transactions": [
+        {
+          "id": "TX_GENESIS_001",
+          "type": "CONSORTIUM_INITIALIZATION",
+          "payload": {
+            "network": "State Organ & Tissue Transplant Blockchain (MediChain)",
+            "authorizedNodes": [
+              "CIFV_NODE_01",
+              "SROPS_NODE_02",
+              "CTORB_ADMIN_NODE_03"
+            ],
+            "governance": "Multi-Signature 2-of-3 Mandatory Signoff Protocol",
+            "initiatedAt": "2026-09-16T11:39:56.627Z"
+          },
+          "senderDepartment": "CTORB_ADMIN",
+          "submittedBy": "SYSTEM_ROOT",
+          "signatures": [],
+          "timestamp": "2026-09-16T11:39:56.628Z",
+          "hash": "d61d9c415ecc929e50b9d72a6a0e176cfda446a77f3cdabaef1355e9fa48bb6a"
+        }
+      ],
+      "validatorNode": "GENESIS_CONSORTIUM_ROOT",
+      "merkleRoot": "d61d9c415ecc929e50b9d72a6a0e176cfda446a77f3cdabaef1355e9fa48bb6a",
+      "nonce": 129,
+      "hash": "00a7bf5e3018a82ea23f4c178fa540a38644be9eac1cb11eaeb41955a109914d"
+    },
+    {
+      "index": 1,
+      "timestamp": "2026-09-16T11:53:46.604Z",
+      "previousHash": "00a7bf5e3018a82ea23f4c178fa540a38644be9eac1cb11eaeb41955a109914d",
+      "transactions": [
+        {
+          "id": "TX_1a0aa10066b_quao0",
+          "type": "CADAVER_INTAKE_DRAFT",
+          "payload": {
+            "hexId": "0x3C71C021",
+            "patientName": "RAAJA RAGU",
+            "bloodGroup": "O+",
+            "causeOfDeath": "HEART ATTACK",
+            "status": "PENDING_INSPECTION_SIGNATURES",
+            "recordHash": "f6b605b67dfa03f2bd46943d66ad2176cae7d58bea32bd971feba1998f21e738"
+          },
+          "senderDepartment": "CIFV",
+          "submittedBy": "CIFV_REGISTRATION_DESK",
+          "signatures": [],
+          "timestamp": "2026-09-16T11:52:52.075Z",
+          "hash": "188ac743572784902b965f71cc42297a42939a8e4ad794394912359626053c2f"
+        },
+        {
+          "id": "TX_1a0aa10db69_ocd0g",
+          "type": "CADAVER_VERIFIED_BLOCK",
+          "payload": {
+            "hexId": "0x3C71C021",
+            "patientName": "RAAJA RAGU",
+            "bloodGroup": "O+",
+            "status": "VERIFIED_FOR_EXTRACTION",
+            "signingDoctors": [
+              "Dr. Rajesh Sharma (CIFV-DOC-101)",
+              "Dr. Ananya Iyer (CIFV-DOC-102)"
+            ],
+            "digitalSignatures": [
+              "0xde0f185ab1ad58132ee1805a6abf31663ef8aa4287000be7cc9e0ec55d9e4119",
+              "0xa8a6d6a9dda190e909beea633fdedc587cd98d5443a5b7c15708809e299a05c3"
+            ],
+            "recordHash": "f6b605b67dfa03f2bd46943d66ad2176cae7d58bea32bd971feba1998f21e738"
+          },
+          "senderDepartment": "CIFV",
+          "submittedBy": "Dr. Ananya Iyer",
+          "signatures": [
+            {
+              "doctorId": "CIFV-DOC-101",
+              "doctorName": "Dr. Rajesh Sharma",
+              "role": "Forensic Pathologist",
+              "regNumber": "MCI-FP-84920",
+              "signatureHash": "0xde0f185ab1ad58132ee1805a6abf31663ef8aa4287000be7cc9e0ec55d9e4119",
+              "publicKey": "PK_0f85a0e8ebaf56bc90c01209",
+              "timestamp": "2026-09-16T11:53:26.628Z"
+            },
+            {
+              "doctorId": "CIFV-DOC-102",
+              "doctorName": "Dr. Ananya Iyer",
+              "role": "Senior Medical Examiner",
+              "regNumber": "MCI-ME-73215",
+              "signatureHash": "0xa8a6d6a9dda190e909beea633fdedc587cd98d5443a5b7c15708809e299a05c3",
+              "publicKey": "PK_1e7b7d9b6bc96360a51701e1",
+              "timestamp": "2026-09-16T11:53:46.601Z"
+            }
+          ],
+          "timestamp": "2026-09-16T11:53:46.601Z",
+          "hash": "45acf478cac5a9f8a9c0ea08faf9c90260b2716f87014f53dd09a09ab4c633f6"
+        }
+      ],
+      "validatorNode": "CIFV_CONSORTIUM_NODE",
+      "merkleRoot": "7ea793628c379e9ca39f45393a75989cd5c416e927bf05184d9db3267832bfec",
+      "nonce": 214,
+      "hash": "0049de16e8766d9cb9f38f4bea39f161599059475c3721b27468dbe170b71326"
+    }
+  ],
+  "pendingTransactions": [
+    {
+      "id": "TX_1a0aa12a4f2_h5hlb",
+      "type": "ORGAN_EXTRACTION_RECORDED",
+      "payload": {
+        "reportId": "HARVEST_1A0AA12A4F1",
+        "cadaverHexId": "0x3C71C021",
+        "organsHarvested": [
+          {
+            "id": "C021-03-5768",
+            "name": "Liver"
+          }
+        ],
+        "reportHash": "fe04baa3f6c9defc7bce0ae3dad2ade17e74a9bff078672ad510074f34386723",
+        "status": "PENDING_SURGICAL_SIGNATURES"
+      },
+      "senderDepartment": "SROPS",
+      "submittedBy": "SROPS_CHIEF_SURGEON",
+      "signatures": [],
+      "timestamp": "2026-09-16T11:55:43.730Z",
+      "hash": "3fe3b33b592296bc63debc28dca05b338e9701f3e0fa9f3a2d5e11f937f266d3"
+    }
+  ],
+  "lastUpdated": "2026-09-16T11:55:43.730Z"
+}
