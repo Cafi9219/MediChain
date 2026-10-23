@@ -106,3 +106,14 @@ export async function fetchAdminOverview() {
   const res = await fetch(`${BASE_URL}/admin/overview`);
   return res.json();
 }
+
+// Deadlines endpoint (uses backend /api/deadlines when available, graceful fallback otherwise)
+export async function fetchDeadlines() {
+  try {
+    const res = await fetch(`${BASE_URL}/deadlines`);
+    if (!res.ok) return { success: false, deadlines: null };
+    return await res.json();
+  } catch {
+    return { success: false, deadlines: null };
+  }
+}
