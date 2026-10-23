@@ -57,6 +57,7 @@ export default function App() {
       <Navbar
         currentDept={currentDept}
         onLogout={handleLogout}
+        onSwitchDepartment={handleSelectDepartment}
         onOpenDoctors={() => setDoctorModalOpen(true)}
         onOpenExplorer={() => setExplorerOpen(true)}
         blockHeight={blockHeight}
