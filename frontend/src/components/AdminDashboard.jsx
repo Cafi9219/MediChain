@@ -7,26 +7,63 @@ import {
   Key,
   Clock,
   History,
-  Stethoscope
+  Stethoscope,
+  AlertTriangle,
+  AlertCircle,
+  CheckCircle2,
+  RefreshCw,
+  ShieldAlert,
+  Flame,
+  Activity
 } from 'lucide-react';
 import TermTooltip from './TermTooltip.jsx';
 import TimeStatusBadge from './TimeStatusBadge.jsx';
-import { fetchAdminOverview, fetchCadavers, fetchOrgansList, fetchHarvestReports, fetchDeadlines } from '../utils/api.js';
+import {
+  fetchAdminOverview,
+  fetchCadavers,
+  fetchOrgansList,
+  fetchHarvestReports,
+  fetchDeadlines,
+  triggerDeadlineScan,
+  fetchBlockchain
+} from '../utils/api.js';
+
+function formatRemainingSeconds(secs, overdue) {
+  if (overdue || secs < 0) {
+    const abs = Math.abs(secs);
+    const hrs = Math.floor(abs / 3600);
+    const mins = Math.round((abs % 3600) / 60);
+    if (hrs > 0) return `Overdue by ${hrs}h ${mins}m`;
+    return `Overdue by ${mins}m`;
+  }
+  const hrs = Math.floor(secs / 3600);
+  const mins = Math.round((secs % 3600) / 60);
+  if (hrs > 0) return `${hrs}h ${mins}m remaining`;
+  return `${mins}m remaining`;
+}
 
 export default function AdminDashboard({ onOpenExplorer, onOpenDoctors }) {
-  const [activeTab, setActiveTab] = useState('overview'); // 'overview', 'personnel', 'organs', 'cadavers'
+  const [activeTab, setActiveTab] = useState('overview'); // 'overview', 'deadlines', 'personnel', 'organs', 'cadavers'
   const [adminData, setAdminData] = useState(null);
   const [cadavers, setCadavers] = useState([]);
   const [organs, setOrgans] = useState([]);
   const [harvestReports, setHarvestReports] = useState([]);
   const [deadlinesMap, setDeadlinesMap] = useState({});
+  const [deadlinesList, setDeadlinesList] = useState([]);
+  const [escalationsList, setEscalationsList] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [scanning, setScanning] = useState(false);
+  const [scanMessage, setScanMessage] = useState(null);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState(new Date());
 
   // Certificate / Print Modal
   const [selectedItemForCert, setSelectedItemForCert] = useState(null);
 
   useEffect(() => {
     loadAllData();
+    // Auto-refresh every 15 seconds
+    const interval = setInterval(loadAllData, 15000);
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -41,21 +78,25 @@ export default function AdminDashboard({ onOpenExplorer, onOpenDoctors }) {
   }, [selectedItemForCert]);
 
   async function loadAllData() {
-    setLoading(true);
     try {
-      const [overviewRes, cadRes, orgRes, repRes, dRes] = await Promise.all([
-        fetchAdminOverview(),
-        fetchCadavers(),
-        fetchOrgansList(),
-        fetchHarvestReports(),
-        fetchDeadlines()
+      const [overviewRes, cadRes, orgRes, repRes, dRes, bRes] = await Promise.all([
+        fetchAdminOverview().catch(() => ({ success: false })),
+        fetchCadavers().catch(() => ({ success: false })),
+        fetchOrgansList().catch(() => ({ success: false })),
+        fetchHarvestReports().catch(() => ({ success: false })),
+        fetchDeadlines().catch(() => ({ success: false, deadlines: [] })),
+        fetchBlockchain('ADMIN').catch(() => ({ success: false }))
       ]);
 
-      if (overviewRes.success) setAdminData(overviewRes);
-      if (cadRes.success) setCadavers(cadRes.cadavers);
-      if (orgRes.success) setOrgans(orgRes.organs);
-      if (repRes.success) setHarvestReports(repRes.reports);
-      if (dRes && dRes.success && Array.isArray(dRes.deadlines)) {
+      if (overviewRes && overviewRes.success) setAdminData(overviewRes);
+      if (cadRes && cadRes.success) setCadavers(cadRes.cadavers);
+      if (orgRes && orgRes.success) setOrgans(orgRes.organs);
+      if (repRes && repRes.success) setHarvestReports(repRes.reports);
+
+      // Process Deadlines list
+      let dList = [];
+      if (dRes && Array.isArray(dRes.deadlines)) {
+        dList = [...dRes.deadlines];
         const map = {};
         dRes.deadlines.forEach(item => {
           const key = item.organId || item.recordId || item.hexId;
@@ -63,10 +104,70 @@ export default function AdminDashboard({ onOpenExplorer, onOpenDoctors }) {
         });
         setDeadlinesMap(map);
       }
+
+      // Sort deadlines by remaining time (RED/overdue first, then AMBER, then GREEN)
+      dList.sort((a, b) => {
+        const riskWeight = { RED: 3, AMBER: 2, GREEN: 1 };
+        const rwA = a.overdue ? 4 : (riskWeight[a.riskLevel] || 0);
+        const rwB = b.overdue ? 4 : (riskWeight[b.riskLevel] || 0);
+        if (rwA !== rwB) return rwB - rwA;
+
+        const remA = a.remainingSeconds != null ? a.remainingSeconds : (a.remainingMs ? a.remainingMs / 1000 : 0);
+        const remB = b.remainingSeconds != null ? b.remainingSeconds : (b.remainingMs ? b.remainingMs / 1000 : 0);
+        return remA - remB;
+      });
+      setDeadlinesList(dList);
+
+      // Process Escalations from blockchain transactions
+      const escalations = [];
+      if (bRes && bRes.chain) {
+        bRes.chain.forEach(block => {
+          (block.transactions || []).forEach(tx => {
+            if (tx.type === 'ESCALATION' || tx.type === 'LATE_EVENT') {
+              escalations.push({
+                ...tx,
+                blockIndex: block.index,
+                blockTimestamp: block.timestamp
+              });
+            }
+          });
+        });
+      }
+      escalations.sort((a, b) => new Date(b.blockTimestamp || b.timestamp) - new Date(a.blockTimestamp || a.timestamp));
+      setEscalationsList(escalations);
+
+      setLastRefreshedAt(new Date());
     } catch (err) {
-      console.error(err);
+      console.error('Error loading admin consortium data:', err);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleScanNow() {
+    setScanning(true);
+    setScanMessage(null);
+    try {
+      const res = await triggerDeadlineScan();
+      await loadAllData();
+      if (res && res.success !== false) {
+        setScanMessage({
+          type: 'success',
+          text: res.message || 'Deadline scan completed. Active risk statuses updated on-chain.'
+        });
+      } else {
+        setScanMessage({
+          type: 'error',
+          text: res?.error || 'Scan completed in local mode.'
+        });
+      }
+    } catch {
+      setScanMessage({
+        type: 'error',
+        text: 'Deadline scan endpoint unavailable.'
+      });
+    } finally {
+      setScanning(false);
     }
   }
 
@@ -81,6 +182,9 @@ export default function AdminDashboard({ onOpenExplorer, onOpenDoctors }) {
   };
 
   const personnel = adminData ? adminData.personnel : [];
+
+  const overdueCount = deadlinesList.filter(d => d.overdue || d.riskLevel === 'RED').length;
+  const amberCount = deadlinesList.filter(d => !d.overdue && d.riskLevel === 'AMBER').length;
 
   return (
     <div className="max-w-7xl mx-auto px-4 py-8 space-y-6">
@@ -134,6 +238,29 @@ export default function AdminDashboard({ onOpenExplorer, onOpenDoctors }) {
         <button
           type="button"
           role="tab"
+          aria-selected={activeTab === 'deadlines'}
+          onClick={() => setActiveTab('deadlines')}
+          className={`px-4 py-2 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 ${
+            activeTab === 'deadlines'
+              ? 'bg-purple-700 text-white shadow-sm'
+              : 'text-slate-700 hover:bg-slate-100'
+          }`}
+        >
+          <Clock className="w-3.5 h-3.5" />
+          <span>Deadline &amp; Escalation Monitor</span>
+          {overdueCount > 0 ? (
+            <span className="px-1.5 py-0.2 rounded-full bg-rose-600 text-white font-mono text-[10px] font-bold">
+              {overdueCount}
+            </span>
+          ) : deadlinesList.length > 0 ? (
+            <span className="px-1.5 py-0.2 rounded-full bg-slate-200 text-slate-800 font-mono text-[10px]">
+              {deadlinesList.length}
+            </span>
+          ) : null}
+        </button>
+        <button
+          type="button"
+          role="tab"
           aria-selected={activeTab === 'personnel'}
           onClick={() => setActiveTab('personnel')}
           className={`px-4 py-2 rounded-xl transition-all cursor-pointer ${
@@ -171,6 +298,34 @@ export default function AdminDashboard({ onOpenExplorer, onOpenDoctors }) {
           Donor Intake Dossiers ({cadavers.length})
         </button>
       </div>
+
+      {/* Scan notification banner */}
+      {scanMessage && (
+        <div
+          role="status"
+          className={`p-3 rounded-xl text-xs flex items-center justify-between border font-medium ${
+            scanMessage.type === 'success'
+              ? 'bg-emerald-50 text-emerald-900 border-emerald-200'
+              : 'bg-rose-50 text-rose-900 border-rose-200'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {scanMessage.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            ) : (
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+            )}
+            <span>{scanMessage.text}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setScanMessage(null)}
+            className="font-bold ml-3 text-slate-500 hover:text-slate-800"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* TAB 1: EXECUTIVE OVERVIEW */}
       {activeTab === 'overview' && (
@@ -222,14 +377,25 @@ export default function AdminDashboard({ onOpenExplorer, onOpenDoctors }) {
 
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm space-y-2">
               <span className="text-xs font-bold text-slate-600 uppercase tracking-wider block">
-                Certified Personnel
+                Deadline &amp; Risk Status
               </span>
               <div className="flex items-baseline gap-2">
-                <span className="text-2xl md:text-3xl font-bold text-purple-800 font-mono">
-                  9 Specialists
+                <span className={`text-2xl md:text-3xl font-bold font-mono ${overdueCount > 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
+                  {overdueCount > 0 ? `${overdueCount} Critical` : 'Nominal'}
                 </span>
+                {amberCount > 0 && (
+                  <span className="text-xs font-semibold text-amber-700">
+                    ({amberCount} Amber)
+                  </span>
+                )}
               </div>
-              <p className="text-xs text-slate-600">2 required approvals out of 3 per dept</p>
+              <button
+                type="button"
+                onClick={() => setActiveTab('deadlines')}
+                className="text-xs text-purple-700 hover:underline font-semibold block pt-0.5"
+              >
+                View Monitor →
+              </button>
             </div>
           </div>
 
@@ -355,7 +521,230 @@ export default function AdminDashboard({ onOpenExplorer, onOpenDoctors }) {
         </div>
       )}
 
-      {/* TAB 2: THE 9 SPECIALISTS DIRECTORY (Name, Role, Department, and Public Key ONLY) */}
+      {/* TAB 2: DEADLINE & ESCALATION MONITOR */}
+      {activeTab === 'deadlines' && (
+        <div className="space-y-6">
+          {/* Monitor Control Bar */}
+          <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                  <ShieldAlert className="w-5 h-5 text-purple-700" />
+                  <span>Clinical Deadline &amp; Escalation Engine</span>
+                </h3>
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-xs font-semibold">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                  Active 15s Polling
+                </span>
+              </div>
+              <p className="text-xs text-slate-600 mt-1">
+                Surveillance of organ preservation thresholds (Cold Ischemia), approval targets, and on-chain escalation alerts.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <span className="text-[11px] text-slate-500 hidden md:inline">
+                Last updated: {lastRefreshedAt.toLocaleTimeString()}
+              </span>
+              <button
+                type="button"
+                disabled={scanning}
+                onClick={handleScanNow}
+                className="px-4 py-2 bg-purple-700 hover:bg-purple-800 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm disabled:opacity-60 cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${scanning ? 'animate-spin' : ''}`} />
+                <span>{scanning ? 'Scanning...' : 'Scan now'}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Risk Summary Cards */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-rose-900 uppercase tracking-wider">Critical / Overdue</span>
+                <Flame className="w-4 h-4 text-rose-600" />
+              </div>
+              <div className="text-2xl font-bold font-mono text-rose-700">
+                {overdueCount}
+              </div>
+              <p className="text-xs text-rose-800">Breached preservation windows or urgent action required</p>
+            </div>
+
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-amber-900 uppercase tracking-wider">Amber Warning</span>
+                <Clock className="w-4 h-4 text-amber-600" />
+              </div>
+              <div className="text-2xl font-bold font-mono text-amber-700">
+                {amberCount}
+              </div>
+              <p className="text-xs text-amber-800">Approaching threshold limits (&lt; 25% window remaining)</p>
+            </div>
+
+            <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-emerald-900 uppercase tracking-wider">Nominal (Green)</span>
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              </div>
+              <div className="text-2xl font-bold font-mono text-emerald-700">
+                {deadlinesList.filter(d => !d.overdue && d.riskLevel === 'GREEN').length}
+              </div>
+              <p className="text-xs text-emerald-800">Securely within clinical storage tolerance</p>
+            </div>
+          </div>
+
+          {/* Section 1: Deadlines Table */}
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h4 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                <Activity className="w-4 h-4 text-purple-700" />
+                <span>Monitored Records &amp; Clinical Thresholds</span>
+              </h4>
+              <span className="text-xs font-mono text-slate-500">
+                Sorted by remaining time (Overdue/RED first)
+              </span>
+            </div>
+
+            {deadlinesList.length === 0 ? (
+              <div className="text-center py-12 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                <Clock className="w-8 h-8 text-slate-400 mx-auto" />
+                <p className="text-sm font-bold text-slate-700">No active deadline risks recorded</p>
+                <p className="text-xs text-slate-500 max-w-md mx-auto">
+                  All active donors and organs are currently within safe clinical thresholds, or the backend deadline scanner is waiting for initial records.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-slate-600 uppercase tracking-wider font-mono">
+                      <th className="pb-2.5">Risk Level</th>
+                      <th className="pb-2.5">Record ID</th>
+                      <th className="pb-2.5">Kind</th>
+                      <th className="pb-2.5">Window / Target</th>
+                      <th className="pb-2.5">Time Remaining</th>
+                      <th className="pb-2.5">Deadline Time</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {deadlinesList.map((item, idx) => {
+                      const isOverdue = item.overdue || item.riskLevel === 'RED';
+                      const remSec = item.remainingSeconds != null
+                        ? item.remainingSeconds
+                        : (item.remainingMs ? Math.round(item.remainingMs / 1000) : 0);
+
+                      let chipClass = 'bg-emerald-100 text-emerald-800 border-emerald-300';
+                      if (item.riskLevel === 'AMBER') chipClass = 'bg-amber-100 text-amber-800 border-amber-300';
+                      if (isOverdue) chipClass = 'bg-rose-100 text-rose-800 border-rose-300 font-bold';
+
+                      return (
+                        <tr key={idx} className={`hover:bg-slate-50 ${isOverdue ? 'bg-rose-50/30' : ''}`}>
+                          <td className="py-3">
+                            <span className={`px-2 py-0.5 rounded-full border text-[11px] font-bold uppercase ${chipClass}`}>
+                              {item.riskLevel || (isOverdue ? 'RED' : 'GREEN')}
+                            </span>
+                          </td>
+                          <td className="py-3 font-mono font-bold text-slate-900">
+                            {item.recordId || item.hexId || item.organId}
+                          </td>
+                          <td className="py-3">
+                            <span className="capitalize px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-medium">
+                              {item.kind || 'organ'}
+                            </span>
+                          </td>
+                          <td className="py-3 font-medium text-slate-800">
+                            {item.windowKey || item.event || 'Safe Window'}
+                          </td>
+                          <td className={`py-3 font-mono font-bold ${isOverdue ? 'text-rose-700' : item.riskLevel === 'AMBER' ? 'text-amber-700' : 'text-emerald-700'}`}>
+                            {formatRemainingSeconds(remSec, item.overdue)}
+                          </td>
+                          <td className="py-3 text-slate-600 font-mono">
+                            {item.deadlineAt ? new Date(item.deadlineAt).toLocaleString() : 'N/A'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Section 2: On-Chain Escalations & Late Events */}
+          <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h4 className="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-600" />
+                <span>On-Chain Escalations &amp; Late Events Log</span>
+              </h4>
+              <span className="text-xs font-mono text-slate-500">
+                Ledger types: ESCALATION, LATE_EVENT
+              </span>
+            </div>
+
+            {escalationsList.length === 0 ? (
+              <div className="text-center py-10 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                <CheckCircle2 className="w-7 h-7 text-emerald-600 mx-auto" />
+                <p className="text-sm font-bold text-slate-700">Zero escalation breaches</p>
+                <p className="text-xs text-slate-500">
+                  No automated ESCALATION or LATE_EVENT transactions have been mined on-chain.
+                </p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-slate-600 uppercase tracking-wider font-mono">
+                      <th className="pb-2.5">Block #</th>
+                      <th className="pb-2.5">Event Type</th>
+                      <th className="pb-2.5">Target Record</th>
+                      <th className="pb-2.5">Escalation Trigger / Severity</th>
+                      <th className="pb-2.5">Sender Node</th>
+                      <th className="pb-2.5">Block Timestamp</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {escalationsList.map((esc, eIdx) => {
+                      const isEsc = esc.type === 'ESCALATION';
+                      return (
+                        <tr key={eIdx} className="hover:bg-slate-50">
+                          <td className="py-2.5 font-mono font-bold text-cyan-800">
+                            #{esc.blockIndex}
+                          </td>
+                          <td className="py-2.5">
+                            <span className={`px-2 py-0.5 rounded border text-[11px] font-bold font-mono ${
+                              isEsc
+                                ? 'bg-rose-100 text-rose-800 border-rose-300'
+                                : 'bg-amber-100 text-amber-800 border-amber-300'
+                            }`}>
+                              {esc.type}
+                            </span>
+                          </td>
+                          <td className="py-2.5 font-mono font-semibold text-slate-800">
+                            {esc.payload?.recordId || esc.payload?.organId || esc.payload?.hexId || 'System'}
+                          </td>
+                          <td className="py-2.5 text-slate-700">
+                            {esc.payload?.reason || esc.payload?.details || esc.payload?.riskLevel || 'Threshold breach alert'}
+                          </td>
+                          <td className="py-2.5 text-slate-600 font-mono">
+                            {esc.sender || 'DEADLINE_ENGINE'}
+                          </td>
+                          <td className="py-2.5 text-slate-600 font-mono">
+                            {esc.blockTimestamp ? new Date(esc.blockTimestamp).toLocaleString() : 'N/A'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* TAB 3: THE 9 SPECIALISTS DIRECTORY */}
       {activeTab === 'personnel' && (
         <div className="space-y-4">
           <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 text-xs text-purple-950 flex items-start gap-3">
@@ -407,7 +796,7 @@ export default function AdminDashboard({ onOpenExplorer, onOpenDoctors }) {
         </div>
       )}
 
-      {/* TAB 3: HARVESTED ORGANS MASTER REGISTRY */}
+      {/* TAB 4: HARVESTED ORGANS MASTER REGISTRY */}
       {activeTab === 'organs' && (
         <div className="space-y-4">
           <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
@@ -501,7 +890,7 @@ export default function AdminDashboard({ onOpenExplorer, onOpenDoctors }) {
         </div>
       )}
 
-      {/* TAB 4: CADAVER DOSSIERS */}
+      {/* TAB 5: CADAVER DOSSIERS */}
       {activeTab === 'cadavers' && (
         <div className="space-y-4">
           <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 text-xs text-slate-700">
