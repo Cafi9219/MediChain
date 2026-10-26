@@ -8,9 +8,20 @@ import {
   UserCheck,
   Stethoscope,
   Layers,
-  ShieldCheck
+  ShieldCheck,
+  Truck,
+  Navigation,
+  Info
 } from 'lucide-react';
-import { fetchCadavers, submitOrganHarvest, fetchHarvestReports, signOrganHarvest, fetchDeadlines } from '../utils/api.js';
+import {
+  fetchCadavers,
+  submitOrganHarvest,
+  fetchHarvestReports,
+  signOrganHarvest,
+  fetchDeadlines,
+  fetchHospitals,
+  postEta
+} from '../utils/api.js';
 import MultiSigPad from './MultiSigPad.jsx';
 import TimeStatusBadge from './TimeStatusBadge.jsx';
 import TermTooltip from './TermTooltip.jsx';
@@ -28,11 +39,23 @@ export const ORGAN_CODE_MAP = {
   'Small Bowel / Intestine': '08'
 };
 
+function formatEtaDuration(seconds) {
+  if (!seconds || seconds <= 0) return '0 min';
+  const hrs = Math.floor(seconds / 3600);
+  const mins = Math.round((seconds % 3600) / 60);
+  if (hrs > 0) {
+    return `${hrs}h ${mins}m`;
+  }
+  return `${mins}m`;
+}
+
 export default function SropsDashboard({ onOpenExplorer, onOpenDoctors }) {
   const [activeTab, setActiveTab] = useState('harvest'); // 'harvest' or 'reports'
   const [verifiedCadavers, setVerifiedCadavers] = useState([]);
   const [reports, setReports] = useState([]);
   const [deadlinesMap, setDeadlinesMap] = useState({});
+  const [hospitalsList, setHospitalsList] = useState([]);
+  const [etaState, setEtaState] = useState({}); // { [organId]: { origin, destination, loading, result, error } }
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState(null);
@@ -69,10 +92,11 @@ export default function SropsDashboard({ onOpenExplorer, onOpenDoctors }) {
   async function loadData() {
     setLoading(true);
     try {
-      const [cRes, rRes, dRes] = await Promise.all([
+      const [cRes, rRes, dRes, hRes] = await Promise.all([
         fetchCadavers('VERIFIED_FOR_EXTRACTION'),
         fetchHarvestReports(),
-        fetchDeadlines()
+        fetchDeadlines(),
+        fetchHospitals()
       ]);
 
       if (cRes.success) {
@@ -93,6 +117,10 @@ export default function SropsDashboard({ onOpenExplorer, onOpenDoctors }) {
           if (key) map[key] = item;
         });
         setDeadlinesMap(map);
+      }
+
+      if (hRes && hRes.hospitals) {
+        setHospitalsList(Object.keys(hRes.hospitals));
       }
     } catch (err) {
       console.error(err);
@@ -233,6 +261,61 @@ export default function SropsDashboard({ onOpenExplorer, onOpenDoctors }) {
       });
     } else {
       throw new Error(res.error || 'Signing failed');
+    }
+  }
+
+  function handleEtaParamChange(organId, field, value) {
+    setEtaState(prev => {
+      const current = prev[organId] || {};
+      return {
+        ...prev,
+        [organId]: { ...current, [field]: value, error: null }
+      };
+    });
+  }
+
+  async function handleCalculateEta(organId) {
+    const defaultOrigin = hospitalsList[0] || 'AIIMS New Delhi';
+    const defaultDest = hospitalsList[1] || hospitalsList[0] || 'Safdarjung Hospital (New Delhi)';
+    const current = etaState[organId] || {};
+    const origin = current.origin || defaultOrigin;
+    const destination = current.destination || defaultDest;
+
+    setEtaState(prev => ({
+      ...prev,
+      [organId]: { ...current, origin, destination, loading: true, error: null }
+    }));
+
+    try {
+      const result = await postEta({ organId, origin, destination });
+      if (result && result.success !== false) {
+        setEtaState(prev => ({
+          ...prev,
+          [organId]: { ...current, origin, destination, loading: false, result, error: null }
+        }));
+      } else {
+        setEtaState(prev => ({
+          ...prev,
+          [organId]: {
+            ...current,
+            origin,
+            destination,
+            loading: false,
+            error: result?.error || 'Unable to calculate transit ETA'
+          }
+        }));
+      }
+    } catch (err) {
+      setEtaState(prev => ({
+        ...prev,
+        [organId]: {
+          ...current,
+          origin,
+          destination,
+          loading: false,
+          error: 'Network error calculating ETA'
+        }
+      }));
     }
   }
 
@@ -752,30 +835,138 @@ export default function SropsDashboard({ onOpenExplorer, onOpenDoctors }) {
                         const startIso = org.extractionDate && org.extractionTime
                           ? `${org.extractionDate}T${org.extractionTime}`
                           : rep.createdAt;
+                        const organEta = etaState[org.organId] || {};
+                        const defaultOrigin = hospitalsList[0] || 'AIIMS New Delhi';
+                        const defaultDest = hospitalsList[1] || hospitalsList[0] || 'Safdarjung Hospital (New Delhi)';
 
                         return (
                           <div
                             key={oIdx}
-                            className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-1.5"
+                            className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs space-y-2 flex flex-col justify-between"
                           >
-                            <div className="flex items-center justify-between gap-2">
-                              <strong className="text-slate-900">{org.organName}</strong>
-                              <span className="text-xs font-mono bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded font-bold border border-amber-200">
-                                {org.organId}
-                              </span>
+                            <div className="space-y-1.5">
+                              <div className="flex items-center justify-between gap-2">
+                                <strong className="text-slate-900">{org.organName}</strong>
+                                <span className="text-xs font-mono bg-amber-100 text-amber-900 px-1.5 py-0.5 rounded font-bold border border-amber-200">
+                                  {org.organId}
+                                </span>
+                              </div>
+                              <p className="text-xs text-slate-700">{org.condition}</p>
+                              <p className="text-xs text-slate-600">
+                                Clamp Time: {org.extractionTime} ({org.extractionDate})
+                              </p>
+                              <div className="pt-1">
+                                <TimeStatusBadge
+                                  deadlineData={deadlineEntry}
+                                  organName={org.organName}
+                                  startTime={startIso}
+                                  stage="HARVEST"
+                                />
+                              </div>
                             </div>
-                            <p className="text-xs text-slate-700">{org.condition}</p>
-                            <p className="text-xs text-slate-600">
-                              Clamp Time: {org.extractionTime} ({org.extractionDate})
-                            </p>
-                            <div className="pt-1">
-                              <TimeStatusBadge
-                                deadlineData={deadlineEntry}
-                                organName={org.organName}
-                                startTime={startIso}
-                                stage="HARVEST"
-                              />
-                            </div>
+
+                            {/* Organ Transit ETA Card (Displayed for Certified Organs) */}
+                            {isCertified && (
+                              <div className="mt-2 pt-2 border-t border-slate-200 bg-white p-2.5 rounded-lg border border-slate-200 space-y-2 shadow-xs">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-1 font-bold text-xs text-slate-800">
+                                    <Truck className="w-3.5 h-3.5 text-cyan-700" />
+                                    <span>Organ Transit ETA</span>
+                                  </div>
+                                  <span className="text-[10px] uppercase font-mono text-slate-600">Transit</span>
+                                </div>
+
+                                <div className="space-y-1.5">
+                                  <div>
+                                    <label htmlFor={`eta-origin-${org.organId}`} className="block text-[11px] font-semibold text-slate-600 mb-0.5">
+                                      Origin Hospital
+                                    </label>
+                                    <select
+                                      id={`eta-origin-${org.organId}`}
+                                      value={organEta.origin || defaultOrigin}
+                                      onChange={(e) => handleEtaParamChange(org.organId, 'origin', e.target.value)}
+                                      className="w-full px-2 py-1 bg-slate-50 border border-slate-300 rounded text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-cyan-600"
+                                    >
+                                      {hospitalsList.length > 0 ? (
+                                        hospitalsList.map((hName) => (
+                                          <option key={hName} value={hName}>{hName}</option>
+                                        ))
+                                      ) : (
+                                        <option value={defaultOrigin}>{defaultOrigin}</option>
+                                      )}
+                                    </select>
+                                  </div>
+
+                                  <div>
+                                    <label htmlFor={`eta-dest-${org.organId}`} className="block text-[11px] font-semibold text-slate-600 mb-0.5">
+                                      Destination Hospital
+                                    </label>
+                                    <select
+                                      id={`eta-dest-${org.organId}`}
+                                      value={organEta.destination || defaultDest}
+                                      onChange={(e) => handleEtaParamChange(org.organId, 'destination', e.target.value)}
+                                      className="w-full px-2 py-1 bg-slate-50 border border-slate-300 rounded text-xs text-slate-900 focus:outline-none focus:ring-1 focus:ring-cyan-600"
+                                    >
+                                      {hospitalsList.length > 0 ? (
+                                        hospitalsList.map((hName) => (
+                                          <option key={hName} value={hName}>{hName}</option>
+                                        ))
+                                      ) : (
+                                        <option value={defaultDest}>{defaultDest}</option>
+                                      )}
+                                    </select>
+                                  </div>
+                                </div>
+
+                                <div className="pt-0.5">
+                                  <button
+                                    type="button"
+                                    disabled={organEta.loading}
+                                    onClick={() => handleCalculateEta(org.organId)}
+                                    className="w-full py-1.5 px-2 bg-cyan-700 hover:bg-cyan-800 text-white rounded-md text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors disabled:opacity-60 cursor-pointer shadow-xs"
+                                  >
+                                    <Navigation className="w-3.5 h-3.5" />
+                                    <span>{organEta.loading ? 'Calculating ETA...' : 'Calculate ETA'}</span>
+                                  </button>
+                                </div>
+
+                                {organEta.result && (
+                                  <div className="bg-slate-50 border border-slate-200 rounded p-2 space-y-1 mt-1.5">
+                                    <div className="flex flex-wrap items-center justify-between gap-1 text-xs">
+                                      <span className="font-semibold text-slate-700">
+                                        Dist: <strong className="text-cyan-800 font-mono">{organEta.result.distanceKm} km</strong>
+                                      </span>
+                                      <span className="font-semibold text-slate-700">
+                                        ETA: <strong className="text-emerald-700 font-mono">{formatEtaDuration(organEta.result.etaSeconds)}</strong>
+                                      </span>
+                                    </div>
+
+                                    {organEta.result.method === 'haversine-fallback' && (
+                                      <div className="pt-0.5">
+                                        <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 inline-block">
+                                          approximate estimate
+                                        </span>
+                                      </div>
+                                    )}
+
+                                    <div className="text-[11px] text-slate-600 pt-0.5">
+                                      <span>Arrival: <strong>{new Date(organEta.result.arrivalAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</strong></span>
+                                    </div>
+
+                                    <div className="flex items-center gap-1 text-[11px] text-slate-500 italic pt-1 border-t border-slate-200">
+                                      <Info className="w-3 h-3 text-slate-400 shrink-0" />
+                                      <span>Estimated route time - not live tracking</span>
+                                    </div>
+                                  </div>
+                                )}
+
+                                {organEta.error && (
+                                  <p className="text-[11px] text-rose-700 font-medium">
+                                    {organEta.error}
+                                  </p>
+                                )}
+                              </div>
+                            )}
                           </div>
                         );
                       })}

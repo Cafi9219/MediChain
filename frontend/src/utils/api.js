@@ -107,13 +107,107 @@ export async function fetchAdminOverview() {
   return res.json();
 }
 
-// Deadlines endpoint (uses backend /api/deadlines when available, graceful fallback otherwise)
+// Deadlines endpoints
 export async function fetchDeadlines() {
   try {
     const res = await fetch(`${BASE_URL}/deadlines`);
-    if (!res.ok) return { success: false, deadlines: null };
-    return await res.json();
+    if (!res.ok) return { success: false, deadlines: [] };
+    const data = await res.json();
+    return {
+      success: Boolean(data && data.success !== false),
+      deadlines: Array.isArray(data?.deadlines) ? data.deadlines : []
+    };
   } catch {
-    return { success: false, deadlines: null };
+    return { success: false, deadlines: [] };
   }
+}
+
+export async function triggerDeadlineScan() {
+  try {
+    const res = await fetch(`${BASE_URL}/deadlines/scan`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch {
+    // Graceful offline fallback
+  }
+  return { success: false, error: 'Deadline scan endpoint unavailable' };
+}
+
+// Hospital & Transit ETA endpoints
+const FALLBACK_HOSPITALS = {
+  'AIIMS New Delhi': { lat: 28.5672, lng: 77.2100 },
+  'Safdarjung Hospital (New Delhi)': { lat: 28.5700, lng: 77.2078 },
+  'Sir Ganga Ram Hospital (New Delhi)': { lat: 28.6386, lng: 77.1896 },
+  'Apollo Hospital (Chennai)': { lat: 13.0604, lng: 80.2508 },
+  'Fortis Memorial Research Institute (Gurugram)': { lat: 28.4595, lng: 77.0725 },
+  'Manipal Hospital (Bengaluru)': { lat: 12.9584, lng: 77.6487 },
+  'PGIMER (Chandigarh)': { lat: 30.7634, lng: 76.7770 }
+};
+
+export async function fetchHospitals() {
+  try {
+    const res = await fetch(`${BASE_URL}/eta/hospitals`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.hospitals && Object.keys(data.hospitals).length > 0) {
+        return data;
+      }
+    }
+  } catch {
+    // Offline / fallback mode
+  }
+  return { success: true, hospitals: FALLBACK_HOSPITALS };
+}
+
+function calculateHaversineDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371; // Earth radius in km
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLon = (lon2 - lon1) * (Math.PI / 180);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+export async function postEta(payload) {
+  try {
+    const res = await fetch(`${BASE_URL}/eta`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (res.ok) {
+      return await res.json();
+    }
+    const errData = await res.json().catch(() => null);
+    if (errData && errData.error) {
+      return { success: false, error: errData.error };
+    }
+  } catch {
+    // Offline / fallback calculation
+  }
+
+  // Graceful client-side fallback if backend is offline or route unavailable
+  const originCoord = FALLBACK_HOSPITALS[payload.origin] || { lat: 28.5672, lng: 77.2100 };
+  const destCoord = FALLBACK_HOSPITALS[payload.destination] || { lat: 28.6386, lng: 77.1896 };
+  const straightDist = calculateHaversineDistance(originCoord.lat, originCoord.lng, destCoord.lat, destCoord.lng);
+  const roadDist = Math.max(1.2, straightDist * 1.3); // typical road tortuosity factor
+  const avgSpeedKmh = 45; // average green corridor speed
+  const etaSeconds = Math.round((roadDist / avgSpeedKmh) * 3600);
+  const arrivalAt = new Date(Date.now() + etaSeconds * 1000).toISOString();
+
+  return {
+    success: true,
+    etaSeconds,
+    distanceKm: Number(roadDist.toFixed(1)),
+    method: 'haversine-fallback',
+    arrivalAt,
+    txId: 'OFFLINE_FALLBACK'
+  };
 }
