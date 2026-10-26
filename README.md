@@ -101,6 +101,48 @@ npm run build
 
 ---
 
+## ⚙️ Core System Mechanisms
+
+MediChain integrates three specialized architectural mechanisms designed to address the specific vulnerabilities, time-sensitivities, and auditability requirements of cadaveric organ recovery:
+
+### 1. Multi-Party Verification (2-of-3 Threshold Consensus)
+To eliminate single points of failure, administrative coercion, and unilateral data modification, every critical clinical milestone requires multi-party verification:
+- **Intake Clearance (CIFV)**: A deceased donor dossier is certified only after **2 out of 3 certified forensic/medical specialists** (Pathologist, Medical Examiner, Chief Medical Officer) cryptographically sign the record.
+- **Harvest & Packaging Clearance (SROPS)**: Surgical recovery and preservation parameters require independent cryptographic signatures from **2 out of 3 certified retrieval specialists** (Lead Transplant Surgeon, Retrieval Specialist, Perfusionist).
+- **Consensus Enforcement**: The backend ledger rejects duplicate signatures from the same specialist, blocks signatures from unauthorized departments, and commits the immutable block to the chain only when the threshold requirement ($k = 2, n = 3$) is strictly fulfilled.
+
+### 2. Deadline-Aware Escalation Engine
+Donor cold ischemia time (CIT) and pre-recovery warm ischemia time (WIT) are strictly bounded by physiological viability limits (e.g., Heart: 4–6 hrs, Liver: 8–12 hrs, Kidney: 24–36 hrs):
+- **Automated Scan**: Scans all active donor dossiers and harvested organ records on every state transition and periodically (every 30 seconds).
+- **Risk Stratification**: Classifies records into `GREEN` ($\ge 30\%$ remaining), `AMBER` ($< 30\%$ remaining), and `RED` / `OVERDUE` ($\le 0$ ms).
+- **On-Chain Audit Trails**: Critical deadline breaches automatically append signed `ESCALATION` and `LATE_EVENT` transactions to the ledger. Crucially, deadline escalations are forensic and advisory—they alert coordinators without relaxing or bypassing the mandatory 2-of-3 threshold consensus.
+
+### 3. Route-Based ETA Support
+Organ transit between retrieval centers and recipient transplant hospitals requires predictable logistics without introducing heavy live-tracking infrastructure:
+- **Regional Consortium Graph**: Coordinates transit between major transplant hubs (e.g., AIIMS New Delhi, Safdarjung, Sir Ganga Ram, Apollo Chennai, FMRI Gurugram, Manipal Bengaluru, PGIMER Chandigarh).
+- **Dual-Provider Routing**: Queries road-network distance and transit duration via OSRM routing APIs, falling back automatically to calibrated Haversine geodetic estimates if network routes are unavailable.
+- **Verifiable Dispatch Logging**: Upon dispatch calculation, an `ETA_RECORDED` transaction containing origin, destination, estimated duration, distance, provider method, and SHA-256 integrity hash is permanently anchored to the blockchain for retrospective transit dispute resolution.
+- **Privacy & Simplicity**: Operates on milestone ETA calculations rather than active GPS tracking, avoiding continuous device battery degradation and location-privacy leakage.
+
+---
+
+## 📊 Experimental Evaluation & Benchmarking
+
+The repository includes an automated empirical benchmark suite that validates the performance, security, and scalability of these three mechanisms across 4 formal experiments:
+
+```bash
+# Execute the benchmark suite
+node backend/experiments/run_experiments.js
+```
+
+The script outputs real-time console metrics and records raw trial data to `backend/experiments/results.csv` (193 empirical rows) covering:
+1. **Experiment 1**: Multi-Party Approval Latency & Sybil / Duplicate Rejection Defense.
+2. **Experiment 2**: Deadline Engine Scan Overhead & Escalation Transaction Triggering.
+3. **Experiment 3**: Blockchain Transaction Throughput & Batch Scaling (1, 10, 50, 100 tx/batch).
+4. **Experiment 4**: Route Transit Estimation vs. Ground-Truth Corridor Metrics (MAE and MAPE).
+
+---
+
 ## 🧪 3-Line Manual Verification Script per Role
 
 1. **CIFV Officer (`DEPT_CIFV`)**:
@@ -112,8 +154,10 @@ npm run build
    - Click **Switch Role → Surgical Organ Recovery Suite (SROPS)** in the top navbar, sign in (`DEPT_SROPS` / `Pass@srops2026`), and verify each organ slot in the **Organ Recovery Form** displays its live **Preservation Window** `<TimeStatusBadge />`.
    - Select the approved donor, click **Generate Surgical Recovery Dossier**, and verify the new report appears in **Surgical Reports Queue** with `"0 of 2 required approvals (out of 3 specialists)"`.
    - Click **Approve Recovery (0/2)**, verify all 3 SROPS surgeons appear as clickable cards showing **Name, Role, Department, and Public Key only**, and sign sequentially with Dr. Sunil Kulkarni (`2010`) and Dr. Neha Deshmukh (`2020`) in the same modal session.
+   - In **Certified Recovered Organs**, locate the **Organ Transit ETA** card: select an origin and destination hospital, click **Calculate Transit Route & ETA**, and verify the distance, estimated transit duration, expected arrival time, and disclaimer `"Estimated route time - not live tracking"` appear.
 
 3. **CTORB Admin (`DEPT_ADMIN`)**:
    - Click **Switch Role → Central Regulatory & Audit Board (CTORB)** in the top navbar, sign in (`DEPT_ADMIN` / `Pass@admin2026`), and open **The 9 Certified Specialists** tab (and the top navbar **The 9 Specialists** modal) to confirm every card shows **Name, Role, Department, and Public Key only**.
+   - Open **Deadline & Escalations** tab: verify the active deadlines monitor table sorted by remaining time (RED/overdue first), inspect on-chain escalation transactions (`ESCALATION` and `LATE_EVENT`), and click **Scan Now** to trigger an on-demand scan.
    - Open **Recovered Organs Registry** and **Donor Intake Dossiers** tabs to verify each card displays its `<TimeStatusBadge />` countdown pill and `"2 of 2 required approvals (out of 3 specialists)"` status.
    - Click **Open Audit Ledger** (`BlockchainExplorer`) to verify it opens in **Timeline View** by default with plain-language event summaries, expand **Show Cryptographic Proof** on any block to inspect/copy its SHA-256 hash and Merkle root, and toggle **Technical Detail View** to inspect the 2-pane ledger view.
