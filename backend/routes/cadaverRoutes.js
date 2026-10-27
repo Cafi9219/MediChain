@@ -2,14 +2,15 @@ import express from 'express';
 import crypto from 'crypto';
 import { ledger } from '../blockchain/blockchain.js';
 import { Transaction } from '../blockchain/transaction.js';
-import { sha256, generateDoctorSignature } from '../blockchain/cryptoUtils.js';
+import { sha256, generateDoctorSignature, verifyDoctorSignature } from '../blockchain/cryptoUtils.js';
 import { CONSORTIUM_CREDENTIALS } from '../data/doctors.js';
+import { verifyDoctorPinSecure } from '../security/authSecurity.js';
+import { initCadaverPersistence, saveCadavers } from '../data/persistence.js';
 
 const router = express.Router();
 
-// In-memory store for pending/processed cadavers
-// (Initialized with some realistic sample records for presentation)
-let cadaverRegistry = [
+// Seed record for initial deployment / presentation
+const seedCadaverRecords = [
   {
     hexId: '0x4F8B7A92',
     patientName: 'Kishore Varma',
@@ -62,6 +63,7 @@ let cadaverRegistry = [
         regNumber: 'MCI-FP-84920',
         signatureHash: '0x8a92f04e7b1c3d5a6e9f2b8c0d1e4a7f',
         publicKey: 'PK_CIFV_84920_SHARMA',
+        algorithm: 'LEGACY_HMAC_SHA256',
         timestamp: new Date(Date.now() - 3600000 * 3).toISOString()
       },
       {
@@ -71,6 +73,7 @@ let cadaverRegistry = [
         regNumber: 'MCI-ME-73215',
         signatureHash: '0x3c7e1f9a2b4d6e801a5f7c9b0e2d4a6f',
         publicKey: 'PK_CIFV_73215_IYER',
+        algorithm: 'LEGACY_HMAC_SHA256',
         timestamp: new Date(Date.now() - 3600000 * 2).toISOString()
       }
     ],
@@ -78,6 +81,13 @@ let cadaverRegistry = [
     blockchainHash: 'e4f1b8a9c2d7e0f3b5a1c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0e9f8'
   }
 ];
+
+// Persistent file-backed store for cadavers (reloads across server restarts)
+let cadaverRegistry = initCadaverPersistence(seedCadaverRecords);
+
+export function getCadaverRegistry() {
+  return cadaverRegistry;
+}
 
 function generateUniqueHexId() {
   const randomBytes = crypto.randomBytes(4).toString('hex').toUpperCase();
@@ -98,14 +108,14 @@ router.post('/', (req, res) => {
       age: data.age,
       gender: data.gender,
       causeOfDeath: data.causeOfDeath,
-      bodyCondition: data.bodyCondition,
-      deathDate: data.deathDate,
-      deathTime: data.deathTime,
-      arrivalDate: data.arrivalDate,
-      arrivalTime: data.arrivalTime,
+      bodyCondition: data.bodyCondition || 'Cold storage, Intact',
+      deathDate: data.deathDate || new Date().toISOString().split('T')[0],
+      deathTime: data.deathTime || '00:00',
+      arrivalDate: data.arrivalDate || new Date().toISOString().split('T')[0],
+      arrivalTime: data.arrivalTime || '00:00',
       otherMedicalTerms: data.otherMedicalTerms || '',
-      
-      // Biometric fields
+
+      // Multimodal Biometrics
       faceImage: data.faceImage || null,
       fingerprint: {
         isDamaged: Boolean(data.fingerprintDamaged),
@@ -118,13 +128,13 @@ router.post('/', (req, res) => {
         image: data.retinaImage || null
       },
 
-      // Physical identifiers
-      bloodGroup: data.bloodGroup,
-      hairColor: data.hairColor,
-      skinColor: data.skinColor,
-      identificationMarks: data.identificationMarks || 'NA',
+      // Physical Forensic Checklist
+      bloodGroup: data.bloodGroup || 'Unknown',
+      hairColor: data.hairColor || '',
+      skinColor: data.skinColor || '',
+      identificationMarks: data.identificationMarks || '',
 
-      // Consent & Legal
+      // Legal & Family Consent
       familyConsent: {
         hasFamily: Boolean(data.hasFamily),
         nokName: data.nokName || '',
@@ -145,8 +155,8 @@ router.post('/', (req, res) => {
       additionalObservations: data.additionalObservations || '',
 
       // Status & Multi-Sig (2 of 3 rule)
-      status: 'PENDING_INSPECTION_SIGNATURES', // 'PENDING_INSPECTION_SIGNATURES' -> 'VERIFIED_FOR_EXTRACTION'
-      signatures: [], // [{ doctorId, doctorName, signatureHash, timestamp }]
+      status: 'PENDING_INSPECTION_SIGNATURES',
+      signatures: [],
       createdAt: new Date().toISOString(),
       blockchainHash: null
     };
@@ -178,6 +188,7 @@ router.post('/', (req, res) => {
 
     ledger.addTransaction(tx);
     cadaverRegistry.unshift(cadaverRecord);
+    saveCadavers(cadaverRegistry);
 
     res.status(201).json({
       success: true,
@@ -218,18 +229,12 @@ router.post('/:hexId/sign', (req, res) => {
       return res.status(404).json({ success: false, error: 'Cadaver record not found.' });
     }
 
-    // Verify Doctor belongs to CIFV department
-    const doctor = CONSORTIUM_CREDENTIALS.personnel.find(
-      d => d.id.toUpperCase() === (doctorId || '').trim().toUpperCase() && d.department === 'CIFV'
-    );
-
-    if (!doctor) {
-      return res.status(403).json({ success: false, error: 'Unauthorized: Doctor must be registered with CIFV Department.' });
+    // Secure verification of specialist credentials & CIFV department membership
+    const authResult = verifyDoctorPinSecure(doctorId, pin, 'CIFV');
+    if (!authResult.success) {
+      return res.status(authResult.status || 401).json({ success: false, error: authResult.error });
     }
-
-    if (doctor.pin !== pin) {
-      return res.status(401).json({ success: false, error: 'Invalid Doctor Security PIN.' });
-    }
+    const doctor = authResult.doctor;
 
     // Check if already signed by this doctor
     if (cadaver.signatures.some(s => s.doctorId === doctor.id)) {
@@ -238,6 +243,11 @@ router.post('/:hexId/sign', (req, res) => {
 
     // Generate cryptographic digital signature
     const sig = generateDoctorSignature(doctor.id, doctor.name, cadaver.blockchainHash);
+    const isSigValid = verifyDoctorSignature(doctor.id, doctor.name, cadaver.blockchainHash, sig.signatureHash);
+    if (!isSigValid) {
+      return res.status(500).json({ success: false, error: 'Cryptographic signature verification failed.' });
+    }
+
     cadaver.signatures.push({
       doctorId: doctor.id,
       doctorName: doctor.name,
@@ -273,6 +283,9 @@ router.post('/:hexId/sign', (req, res) => {
       ledger.addTransaction(verifyTx);
       blockMined = ledger.minePendingTransactions('CIFV_CONSORTIUM_NODE');
     }
+
+    // Persist changes to disk atomically
+    saveCadavers(cadaverRegistry);
 
     res.json({
       success: true,

@@ -1,21 +1,10 @@
 import express from 'express';
+import crypto from 'crypto';
 import { CONSORTIUM_CREDENTIALS } from '../data/doctors.js';
+import { verifyDoctorPinSecure, sanitizeSpecialist } from '../security/authSecurity.js';
+import { generateCaptcha, validateCaptchaServerSide } from '../security/captchaSecurity.js';
 
 const router = express.Router();
-
-// In-memory captcha store with TTL
-const captchaStore = new Map();
-
-function generateCaptcha() {
-  const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
-  let text = '';
-  for (let i = 0; i < 5; i++) {
-    text += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  const id = 'CAP_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
-  captchaStore.set(id, { text, expiresAt: Date.now() + 5 * 60 * 1000 });
-  return { id, text };
-}
 
 // GET /api/auth/captcha
 router.get('/captcha', (req, res) => {
@@ -27,20 +16,11 @@ router.get('/captcha', (req, res) => {
 router.post('/login', (req, res) => {
   const { departmentId, password, captchaId, captchaInput } = req.body;
 
-  // 1. Verify Captcha
-  if (!captchaId || !captchaInput) {
-    return res.status(400).json({ success: false, error: 'Captcha code is required.' });
+  // 1. Server-side Captcha validation (Fail-closed, single-use, expiring)
+  const captchaResult = validateCaptchaServerSide(captchaId, captchaInput);
+  if (!captchaResult.valid) {
+    return res.status(400).json({ success: false, error: captchaResult.error });
   }
-  const cached = captchaStore.get(captchaId);
-  if (!cached || Date.now() > cached.expiresAt) {
-    captchaStore.delete(captchaId);
-    return res.status(400).json({ success: false, error: 'Captcha expired. Please reload.' });
-  }
-  if (cached.text.toUpperCase() !== captchaInput.trim().toUpperCase()) {
-    captchaStore.delete(captchaId);
-    return res.status(400).json({ success: false, error: 'Incorrect captcha code entered.' });
-  }
-  captchaStore.delete(captchaId); // One-time use
 
   // 2. Check Department Credentials
   const depts = CONSORTIUM_CREDENTIALS.departments;
@@ -64,11 +44,20 @@ router.post('/login', (req, res) => {
     });
   }
 
-  if (matchedDept.password !== password) {
+  // Check password against environment variable with fallback to demo password
+  const envPasswordKey = `DEPT_${matchedDept.role}_PASSWORD`;
+  const expectedPassword = process.env[envPasswordKey] || matchedDept.password;
+
+  // Constant-time password comparison
+  const passBuf = Buffer.from(password || '');
+  const expBuf = Buffer.from(expectedPassword || '');
+  const isPassMatch = passBuf.length === expBuf.length && crypto.timingSafeEqual(passBuf, expBuf);
+
+  if (!isPassMatch) {
     return res.status(401).json({ success: false, error: 'Invalid Department Access Password.' });
   }
 
-  // Success
+  // Success: Return minimal public department profile
   return res.json({
     success: true,
     department: {
@@ -81,48 +70,55 @@ router.post('/login', (req, res) => {
   });
 });
 
-// GET /api/auth/doctors
+// GET /api/auth/doctors - Role-sanitized specialist directory
 router.get('/doctors', (req, res) => {
+  const role = req.headers['x-department-role'] || req.query.role;
+  if (role) {
+    const norm = role.toUpperCase();
+    if (norm === 'EXTERNAL' || norm === 'RTCN' || norm === 'EXTERNAL_HOSPITAL') {
+      return res.status(403).json({
+        success: false,
+        error: 'CONSORTIUM_ACCESS_DENIED',
+        message: 'External Recipient Hospital nodes are restricted from direct specialist roster queries.'
+      });
+    }
+  }
+
   const dept = req.query.department;
   let list = CONSORTIUM_CREDENTIALS.personnel;
   if (dept) {
     list = list.filter(d => d.department.toUpperCase() === dept.toUpperCase());
   }
-  res.json({ success: true, count: list.length, doctors: list });
+
+  // Strictly sanitize: NEVER leak PINs, passwords, or hashes
+  const sanitizedList = list.map(d => sanitizeSpecialist(d));
+  res.json({ success: true, count: sanitizedList.length, doctors: sanitizedList });
 });
 
-// POST /api/auth/verify-doctor (For 2-of-3 Multi-Signature)
+// POST /api/auth/verify-doctor (Specialist PIN validation with attempt limiting)
 router.post('/verify-doctor', (req, res) => {
   const { doctorId, pin, captchaId, captchaInput } = req.body;
 
-  // Verify Captcha
-  if (captchaId && captchaInput) {
-    const cached = captchaStore.get(captchaId);
-    if (!cached || cached.text.toUpperCase() !== captchaInput.trim().toUpperCase()) {
-      return res.status(400).json({ success: false, error: 'Invalid captcha code.' });
+  // If captcha challenge was provided, validate fail-closed
+  if (captchaId || captchaInput) {
+    const captchaResult = validateCaptchaServerSide(captchaId, captchaInput);
+    if (!captchaResult.valid) {
+      return res.status(400).json({ success: false, error: captchaResult.error });
     }
-    captchaStore.delete(captchaId);
   }
 
-  const doc = CONSORTIUM_CREDENTIALS.personnel.find(d => d.id.toUpperCase() === (doctorId || '').trim().toUpperCase());
-  if (!doc) {
-    return res.status(404).json({ success: false, error: 'Medical Officer ID not registered in Consortium.' });
-  }
-
-  if (doc.pin !== pin) {
-    return res.status(401).json({ success: false, error: 'Incorrect Security PIN for Medical Officer.' });
+  // Secure constant-time verification with attempt lockout
+  const authResult = verifyDoctorPinSecure(doctorId, pin);
+  if (!authResult.success) {
+    return res.status(authResult.status || 401).json({
+      success: false,
+      error: authResult.error
+    });
   }
 
   res.json({
     success: true,
-    doctor: {
-      id: doc.id,
-      name: doc.name,
-      role: doc.role,
-      department: doc.department,
-      regNumber: doc.regNumber,
-      publicKey: doc.publicKey
-    }
+    doctor: authResult.doctor
   });
 });
 

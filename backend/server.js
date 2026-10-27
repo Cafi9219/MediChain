@@ -1,18 +1,32 @@
 import express from 'express';
 import cors from 'cors';
 import authRoutes from './routes/authRoutes.js';
-import cadaverRoutes from './routes/cadaverRoutes.js';
-import organRoutes from './routes/organRoutes.js';
+import cadaverRoutes, { getCadaverRegistry } from './routes/cadaverRoutes.js';
+import organRoutes, { getHarvestReports } from './routes/organRoutes.js';
 import blockchainRoutes from './routes/blockchainRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
+import deadlineRoutes from './routes/deadlineRoutes.js';
 import { ledger } from './blockchain/blockchain.js';
+import { verifyStartupLedgerConsistency } from './data/persistence.js';
+import { scanAndEscalate } from './services/deadlineEngine.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Enable CORS for frontend Vite dev server (port 5173 / localhost)
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',')
+  : ['http://localhost:5173', 'http://127.0.0.1:5173'];
+
 app.use(cors({
-  origin: '*',
+  origin: (origin, callback) => {
+    // Allow non-browser requests or allowed origins; in dev allow all if ALLOW_ALL_ORIGINS is set
+    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+      callback(null, true);
+    } else {
+      callback(new Error('CORS policy: Origin not allowed'));
+    }
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'x-department-role']
 }));
@@ -21,7 +35,7 @@ app.use(cors({
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Request logger
+// Request logger (does not log request body to avoid leaking credentials)
 app.use((req, res, next) => {
   console.log(`[CONSORTIUM_LEDGER] ${new Date().toISOString()} | ${req.method} ${req.url}`);
   next();
@@ -33,6 +47,7 @@ app.use('/api/cadavers', cadaverRoutes);
 app.use('/api/organs', organRoutes);
 app.use('/api/blockchain', blockchainRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/deadlines', deadlineRoutes);
 
 // Health Check
 app.get('/api/health', (req, res) => {
@@ -43,6 +58,18 @@ app.get('/api/health', (req, res) => {
     timestamp: new Date().toISOString()
   });
 });
+
+// Startup consistency and integrity check
+verifyStartupLedgerConsistency(getCadaverRegistry(), getHarvestReports());
+
+// Periodic background deadline scan (every 30 seconds)
+setInterval(() => {
+  try {
+    scanAndEscalate(getCadaverRegistry(), getHarvestReports());
+  } catch (err) {
+    console.error('[DEADLINE_SCAN_ERROR]:', err.message);
+  }
+}, 30000);
 
 app.listen(PORT, () => {
   console.log('================================================================');

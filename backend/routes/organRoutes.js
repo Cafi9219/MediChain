@@ -2,8 +2,10 @@ import express from 'express';
 import crypto from 'crypto';
 import { ledger } from '../blockchain/blockchain.js';
 import { Transaction } from '../blockchain/transaction.js';
-import { sha256, generateDoctorSignature } from '../blockchain/cryptoUtils.js';
+import { sha256, generateDoctorSignature, verifyDoctorSignature } from '../blockchain/cryptoUtils.js';
 import { CONSORTIUM_CREDENTIALS } from '../data/doctors.js';
+import { verifyDoctorPinSecure } from '../security/authSecurity.js';
+import { initOrganPersistence, saveOrgans } from '../data/persistence.js';
 
 const router = express.Router();
 
@@ -19,8 +21,8 @@ export const ORGAN_CODES = {
   'Small Bowel / Intestine': '08'
 };
 
-// In-memory store for organ harvest reports
-let harvestReports = [
+// Seed harvest report for initial deployment
+const seedHarvestReports = [
   {
     reportId: 'HARVEST_0X4F8B7A92',
     cadaverHexId: '0x4F8B7A92',
@@ -81,6 +83,7 @@ let harvestReports = [
         regNumber: 'MCI-TS-91204',
         signatureHash: '0x91d4e7a2b0c3f5e8a1d7c9b2e0f4a6d8',
         publicKey: 'PK_SROPS_91204_KULKARNI',
+        algorithm: 'LEGACY_HMAC_SHA256',
         timestamp: new Date(Date.now() - 3600000).toISOString()
       },
       {
@@ -90,6 +93,7 @@ let harvestReports = [
         regNumber: 'MCI-RS-83192',
         signatureHash: '0x2a8f0d4b6e1c9a7f3e5d0b2c8a4f6e1d',
         publicKey: 'PK_SROPS_83192_DESHMUKH',
+        algorithm: 'LEGACY_HMAC_SHA256',
         timestamp: new Date(Date.now() - 1800000).toISOString()
       }
     ],
@@ -98,68 +102,46 @@ let harvestReports = [
   }
 ];
 
-// Helper to generate organ ID based on user specification:
-// First 4 digits: last 4 digits of patient's Hex ID
-// Middle 2 digits: organ code (01 for heart, 02 for eye, etc.)
-// Last 4 digits: random numbers
-export function generateOrganId(cadaverHexId, organName) {
-  // Strip '0x' if present and get last 4 characters
-  const cleanHex = (cadaverHexId || '').replace(/^0x/i, '');
-  const lastFourHex = cleanHex.slice(-4).toUpperCase() || 'XXXX';
-  
-  const code = ORGAN_CODES[organName] || '99';
-  const randomFour = Math.floor(1000 + Math.random() * 9000).toString();
+// Persistent file-backed store for harvest reports (reloads across server restarts)
+let harvestReports = initOrganPersistence(seedHarvestReports);
 
-  return `${lastFourHex}-${code}-${randomFour}`;
+export function getHarvestReports() {
+  return harvestReports;
 }
 
-// POST /api/organs/harvest - Submit organ extraction report
+// POST /api/organs/harvest - Submit surgical extraction report
 router.post('/harvest', (req, res) => {
   try {
     const data = req.body;
+    const reportId = 'HARVEST_' + (data.cadaverHexId || Date.now().toString(16)).toUpperCase();
 
-    if (!data.cadaverHexId) {
-      return res.status(400).json({ success: false, error: 'Cadaver Hex ID is required.' });
-    }
-
-    const totalCount = parseInt(data.totalOrgansExtracted, 10) || 1;
-    const rawOrgans = Array.isArray(data.organs) ? data.organs : [];
-
-    // Format each organ according to the algorithmic ID formula
-    const formattedOrgans = rawOrgans.slice(0, totalCount).map((org, idx) => {
-      const organName = org.organName || 'Unspecified Organ';
-      const autoOrganId = generateOrganId(data.cadaverHexId, organName);
-
-      return {
-        slotNumber: idx + 1,
-        organId: autoOrganId,
-        organName: organName,
-        organCode: ORGAN_CODES[organName] || '00',
-        condition: org.condition || 'Viable - Grade A',
-        extractionDate: org.extractionDate || new Date().toISOString().split('T')[0],
-        extractionTime: org.extractionTime || '12:00',
-        preservationSolution: org.preservationSolution || 'University of Wisconsin (UW) Solution',
-        storageTemperature: org.storageTemperature || '4°C (Static Cold Storage)',
-        qaImage: org.qaImage || null,
-        qaNotes: org.qaNotes || 'Organ cleared for transplantation. Perfusion intact.'
-      };
-    });
-
-    const reportId = 'HARVEST_' + Date.now().toString(16).toUpperCase();
+    const formattedOrgans = (data.organs || []).map((org, idx) => ({
+      slotNumber: idx + 1,
+      organId: org.organId || `ORG_${Date.now()}_${idx + 1}`,
+      organName: org.organName,
+      organCode: ORGAN_CODES[org.organName] || '99',
+      condition: org.condition || 'Viable - Optimal Perfusion',
+      extractionDate: org.extractionDate || new Date().toISOString().split('T')[0],
+      extractionTime: org.extractionTime || '00:00',
+      preservationSolution: org.preservationSolution || 'University of Wisconsin (UW) Solution',
+      storageTemperature: org.storageTemperature || '4°C (Static Cold Storage)',
+      qaImage: org.qaImage || null,
+      qaNotes: org.qaNotes || ''
+    }));
 
     const report = {
       reportId,
       cadaverHexId: data.cadaverHexId,
-      patientName: data.patientName || 'Verified Donor',
-      arrivalDateAtExtraction: data.arrivalDateAtExtraction || '',
-      arrivalTimeAtExtraction: data.arrivalTimeAtExtraction || '',
+      patientName: data.patientName || 'Anonymous Donor',
+      arrivalDateAtExtraction: data.arrivalDateAtExtraction || new Date().toISOString().split('T')[0],
+      arrivalTimeAtExtraction: data.arrivalTimeAtExtraction || '00:00',
       totalOrgansExtracted: formattedOrgans.length,
       organs: formattedOrgans,
       operatingSurgeonsCount: data.operatingSurgeonsCount || 3,
-      operatingSurgeonsList: data.operatingSurgeonsList || 'Dr. Sunil Kulkarni, Dr. Neha Deshmukh',
+      operatingSurgeonsList: data.operatingSurgeonsList || '',
       notes: data.notes || '',
-      status: 'PENDING_SURGICAL_SIGNATURES', // 'PENDING_SURGICAL_SIGNATURES' -> 'CERTIFIED_HARVEST'
-      signatures: [], // [{ doctorId, doctorName, signatureHash, timestamp }]
+      status: 'PENDING_SURGICAL_SIGNATURES',
+      signatures: [],
       createdAt: new Date().toISOString(),
       reportHash: null
     };
@@ -167,17 +149,17 @@ router.post('/harvest', (req, res) => {
     report.reportHash = sha256({
       reportId: report.reportId,
       cadaverHexId: report.cadaverHexId,
-      totalOrgans: report.totalOrgansExtracted,
-      organs: report.organs.map(o => o.organId),
+      organsCount: report.totalOrgansExtracted,
+      organs: report.organs.map(o => ({ id: o.organId, name: o.organName, time: o.extractionTime })),
       createdAt: report.createdAt
     });
 
-    // Add initial transaction to pending blockchain pool
     const harvestTx = new Transaction({
       type: 'ORGAN_EXTRACTION_RECORDED',
       payload: {
         reportId: report.reportId,
         cadaverHexId: report.cadaverHexId,
+        organsExtractedCount: report.totalOrgansExtracted,
         organsHarvested: report.organs.map(o => ({ id: o.organId, name: o.organName })),
         reportHash: report.reportHash,
         status: report.status
@@ -188,6 +170,7 @@ router.post('/harvest', (req, res) => {
 
     ledger.addTransaction(harvestTx);
     harvestReports.unshift(report);
+    saveOrgans(harvestReports);
 
     res.status(201).json({
       success: true,
@@ -232,25 +215,24 @@ router.post('/reports/:reportId/sign', (req, res) => {
       return res.status(404).json({ success: false, error: 'Harvest report not found.' });
     }
 
-    // Verify Surgeon belongs to SROPS department
-    const surgeon = CONSORTIUM_CREDENTIALS.personnel.find(
-      d => d.id.toUpperCase() === (doctorId || '').trim().toUpperCase() && d.department === 'SROPS'
-    );
-
-    if (!surgeon) {
-      return res.status(403).json({ success: false, error: 'Unauthorized: Surgeon must be registered with SROPS Department.' });
+    // Secure verification of specialist credentials & SROPS department membership
+    const authResult = verifyDoctorPinSecure(doctorId, pin, 'SROPS');
+    if (!authResult.success) {
+      return res.status(authResult.status || 401).json({ success: false, error: authResult.error });
     }
-
-    if (surgeon.pin !== pin) {
-      return res.status(401).json({ success: false, error: 'Invalid Surgeon Security PIN.' });
-    }
+    const surgeon = authResult.doctor;
 
     if (report.signatures.some(s => s.doctorId === surgeon.id)) {
       return res.status(400).json({ success: false, error: `Dr. ${surgeon.name} has already signed this harvest report.` });
     }
 
-    // Generate cryptographic signature
+    // Generate and verify cryptographic signature
     const sig = generateDoctorSignature(surgeon.id, surgeon.name, report.reportHash);
+    const isSigValid = verifyDoctorSignature(surgeon.id, surgeon.name, report.reportHash, sig.signatureHash);
+    if (!isSigValid) {
+      return res.status(500).json({ success: false, error: 'Cryptographic signature verification failed.' });
+    }
+
     report.signatures.push({
       doctorId: surgeon.id,
       doctorName: surgeon.name,
@@ -287,6 +269,9 @@ router.post('/reports/:reportId/sign', (req, res) => {
       ledger.addTransaction(certTx);
       blockMined = ledger.minePendingTransactions('SROPS_SURGICAL_CONSORTIUM_NODE');
     }
+
+    // Persist changes to disk atomically
+    saveOrgans(harvestReports);
 
     res.json({
       success: true,

@@ -43,7 +43,7 @@ const ROUTE_BENCHMARKS = [
 
 console.log('========================================================================');
 console.log(' MEDILAYER CONSORTIUM BLOCKCHAIN EXPERIMENTAL BENCHMARK SUITE');
-console.log(' Running 4 Core Empirical Validations...');
+console.log(' Running 4 Core Empirical Validations (Legacy HMAC Baseline)...');
 console.log('========================================================================\n');
 
 const csvRows = [
@@ -51,9 +51,15 @@ const csvRows = [
 ];
 
 // -----------------------------------------------------------------------------
-// EXPERIMENT 1: Multi-Party Approval Verification & Threshold Security
+// EXPERIMENT 1: Multi-Party Approval Verification [HMAC Baseline (Simulated)]
+// What this benchmark measures:
+//   - In-memory HMAC-SHA256 signature verification latency
+//   - Algorithmic rejection of duplicate specialist signatures (100% defense)
+//   - Algorithmic rejection of unauthorized department signatures (100% defense)
+// What this benchmark DOES NOT measure:
+//   - Asymmetric ECDSA signature verification or live network HTTP roundtrips.
 // -----------------------------------------------------------------------------
-console.log('[1/4] Running Experiment 1: Multi-Party 2-of-3 Approval Verification...');
+console.log('[1/4] Running Experiment 1: Multi-Party 2-of-3 Approval Verification [HMAC Baseline (Simulated)]...');
 const TRIALS = 50;
 let totalSig1Time = 0;
 let totalSig2MiningTime = 0;
@@ -101,9 +107,14 @@ console.log(`  -> Duplicate Signature Defense: ${duplicateRejections}/${TRIALS} 
 console.log(`  -> Unauthorized Signatory Defense: ${unauthorizedRejections}/${TRIALS} rejected (100%)\n`);
 
 // -----------------------------------------------------------------------------
-// EXPERIMENT 2: Deadline-Aware Escalation & Risk Classification Latency
+// EXPERIMENT 2: Deadline Engine & Escalation Latency [Synthetic Classification Loop]
+// What this benchmark measures:
+//   - Computational latency of evaluating donor records against ischemic windows
+//   - Classification into GREEN / AMBER / RED thresholds
+// What this benchmark DOES NOT measure:
+//   - End-to-end distributed network gossip latency or live hospital notification
 // -----------------------------------------------------------------------------
-console.log('[2/4] Running Experiment 2: Deadline Engine & Escalation Latency...');
+console.log('[2/4] Running Experiment 2: Deadline Engine Calculation Latency [Synthetic Classification Loop]...');
 const DEADLINE_TRIALS = 30;
 let totalScanTime = 0;
 let escalationEventsEmitted = 0;

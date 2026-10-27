@@ -136,10 +136,12 @@ node backend/experiments/run_experiments.js
 ```
 
 The script outputs real-time console metrics and records raw trial data to `backend/experiments/results.csv` (193 empirical rows) covering:
-1. **Experiment 1**: Multi-Party Approval Latency & Sybil / Duplicate Rejection Defense.
-2. **Experiment 2**: Deadline Engine Scan Overhead & Escalation Transaction Triggering.
+1. **Experiment 1**: Multi-Party Approval Latency & Sybil / Duplicate Rejection Defense *(HMAC baseline (simulated))*.
+2. **Experiment 2**: Deadline Engine Calculation Latency *(Synthetic classification loop)*.
 3. **Experiment 3**: Blockchain Transaction Throughput & Batch Scaling (1, 10, 50, 100 tx/batch).
 4. **Experiment 4**: Route Transit Estimation vs. Ground-Truth Corridor Metrics (MAE and MAPE).
+
+> **Note on Baseline Benchmarks**: Experiment 1 evaluates the legacy HMAC baseline (simulated in-memory) to measure duplicate prevention and signature parsing overhead before asymmetric ECDSA migration in Step 1. Experiment 2 measures algorithmic classification latency across physiological thresholds.
 
 ---
 

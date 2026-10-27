@@ -2,3 +2,7 @@ node_modules/
 dist/
 .env
 *.log
+backend/data/cadavers.json*
+backend/data/organs.json*
+backend/data/*.bak
+backend/data/*.tmp
