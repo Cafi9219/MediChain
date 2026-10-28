@@ -1,0 +1,6 @@
+organ_type,window_hours,corridor_local_mins,corridor_city_mins,corridor_regional_mins,corridor_interstate_mins
+"Heart",4,209,179,-219,-2828
+"Lung",6,329,299,-99,-2708
+"Liver",8,449,419,21,-2588
+"Kidney",6,329,299,-99,-2708
+"Cornea",6,329,299,-99,-2708

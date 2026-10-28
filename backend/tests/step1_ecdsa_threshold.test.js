@@ -312,6 +312,38 @@ it('Reject signature forged with legacy shared HMAC secret', () => {
   assert.match(res.error, /Invalid ECDSA P-256 signature/);
 });
 
+it('Reject signature forged with rogue uncertified ECDSA key pair', () => {
+  const record = {
+    hexId: '0xTEST_ROGUE_KEY',
+    status: 'PENDING_INSPECTION_SIGNATURES',
+    signatures: []
+  };
+
+  // Attacker generates their own rogue P-256 key pair
+  const rogueKp = crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+  const sign = crypto.createSign('SHA256');
+  sign.update(Buffer.from(sha256('TEST_ROGUE_DIGEST'), 'hex'));
+  const rogueSig = '0x' + sign.sign(rogueKp.privateKey, 'hex');
+
+  // Attempts to present this signature on behalf of Dr. Rajesh Sharma
+  const res = processThresholdApproval({
+    record,
+    recordId: record.hexId,
+    doctorId: 'CIFV-DOC-101',
+    providedSignature: rogueSig,
+    dept: 'CIFV',
+    milestoneType: 'CADAVER_VERIFIED_BLOCK',
+    payloadToSign: payload,
+    getLatestPayloadToCommit: () => payload,
+    targetVerifiedStatus: 'VERIFIED_FOR_EXTRACTION',
+    k: 2
+  });
+
+  assert.strictEqual(res.success, false);
+  assert.strictEqual(res.status, 400);
+  assert.match(res.error, /Cryptographic signature verification failed: Invalid ECDSA P-256 signature/);
+});
+
 // --------------------------------------------------------------------------
 // 6. Post-Signature Tampering at Commit Time
 // --------------------------------------------------------------------------
@@ -451,6 +483,26 @@ it('Block edited after commit causes chain and Merkle check to fail', () => {
 
   // Restore transaction
   originalTx.payload.patientName = originalPatient;
+});
+
+it('simulateTamper route endpoint detects unauthorized payload tampering and reports tamperDetected: true', () => {
+  assert.ok(ledger.chain.length >= 2, 'Need at least 2 blocks to simulate tampering');
+  const targetBlock = ledger.chain[1];
+  const originalPayload = { ...targetBlock.transactions[0].payload };
+
+  // Alter payload as done in POST /api/blockchain/simulate-tamper
+  targetBlock.transactions[0].payload = {
+    ...targetBlock.transactions[0].payload,
+    TAMPERED_FIELD: 'MALICIOUS_DATA'
+  };
+
+  const check = ledger.isChainValid();
+  assert.strictEqual(check.valid, false, 'Tampered block payload must invalidate chain');
+  assert.match(check.error, /payload tampered/);
+
+  // Restore
+  targetBlock.transactions[0].payload = originalPayload;
+  assert.strictEqual(ledger.isChainValid().valid, true, 'Chain must be valid after restoration');
 });
 
 // Cleanup test ledger modifications

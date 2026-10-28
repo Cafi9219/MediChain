@@ -8,10 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const KEYSTORE_FILE = path.join(__dirname, '..', 'data', 'keystore.json');
 
-// Master consortium root seed to deterministically provision standard keypairs
-const MASTER_ROOT_SEED = 'MEDICHAIN_CONSORTIUM_SECP256R1_ROOT_2026';
-
-// Known initial evaluation PINs for the 9 specialists + system coordinator
+// Default initial specialist evaluation PINs for automated testing
 const DEFAULT_PINS = {
   'CIFV-DOC-101': '1010',
   'CIFV-DOC-102': '1020',
@@ -28,48 +25,6 @@ const DEFAULT_PINS = {
 let inMemoryKeystore = null;
 
 /**
- * Derives a deterministic SECP256R1 (P-256) KeyObject pair for a specialist
- */
-export function deriveSpecialistKeyPair(specialistId) {
-  const seed = crypto.createHmac('sha256', MASTER_ROOT_SEED).update(specialistId).digest();
-  const ecdh = crypto.createECDH('prime256v1');
-  ecdh.setPrivateKey(seed);
-  const pub = ecdh.getPublicKey();
-  const x = pub.subarray(1, 33).toString('base64url');
-  const y = pub.subarray(33, 65).toString('base64url');
-  const d = seed.toString('base64url');
-
-  const privateKey = crypto.createPrivateKey({
-    key: { kty: 'EC', crv: 'P-256', x, y, d },
-    format: 'jwk'
-  });
-  const publicKey = crypto.createPublicKey({
-    key: { kty: 'EC', crv: 'P-256', x, y },
-    format: 'jwk'
-  });
-
-  return { privateKey, publicKey };
-}
-
-/**
- * Encrypts private key bytes using AES-256-GCM with scrypt-derived key from doctor's PIN
- */
-function encryptPrivateKey(privateKey, pin, salt) {
-  const derBuf = privateKey.export({ type: 'pkcs8', format: 'der' });
-  const encKey = crypto.scryptSync(pin, salt, 32, { N: 16384, r: 8, p: 1 });
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv('aes-256-gcm', encKey, iv);
-  const ciphertext = Buffer.concat([cipher.update(derBuf), cipher.final()]);
-  const authTag = cipher.getAuthTag();
-
-  return {
-    iv: iv.toString('hex'),
-    authTag: authTag.toString('hex'),
-    ciphertext: ciphertext.toString('hex')
-  };
-}
-
-/**
  * Decrypts private key bytes using doctor's PIN and returns KeyObject
  */
 function decryptPrivateKey(entry, pin) {
@@ -78,6 +33,7 @@ function decryptPrivateKey(entry, pin) {
   const authTag = Buffer.from(entry.authTag, 'hex');
   const ciphertext = Buffer.from(entry.ciphertext, 'hex');
 
+  // scrypt key derivation (N=16384, r=8, p=1)
   const encKey = crypto.scryptSync(pin, salt, 32, { N: 16384, r: 8, p: 1 });
   const decipher = crypto.createDecipheriv('aes-256-gcm', encKey, iv);
   decipher.setAuthTag(authTag);
@@ -91,11 +47,12 @@ function decryptPrivateKey(entry, pin) {
 
   // Zero-fill decrypted buffer for forward secrecy
   decrypted.fill(0);
+  encKey.fill(0);
   return privateKey;
 }
 
 /**
- * Initializes the keystore from disk or provisions it deterministically
+ * Initializes the keystore from disk. If missing, runs random key generation.
  */
 export function initKeystore() {
   if (inMemoryKeystore) {
@@ -108,11 +65,11 @@ export function initKeystore() {
       inMemoryKeystore = JSON.parse(raw);
       return inMemoryKeystore;
     } catch (err) {
-      console.warn('Could not read existing keystore, regenerating:', err.message);
+      console.warn('Could not read existing keystore, provisioning fresh keystore:', err.message);
     }
   }
 
-  // Provision keystore
+  // Provision fresh random keypairs if keystore.json is not present
   const keystoreData = {};
   const allIds = [
     ...CONSORTIUM_CREDENTIALS.personnel.map(p => p.id),
@@ -122,16 +79,30 @@ export function initKeystore() {
   for (const id of allIds) {
     const pin = DEFAULT_PINS[id] || '1010';
     const salt = crypto.randomBytes(16);
-    const { privateKey, publicKey } = deriveSpecialistKeyPair(id);
-    const encrypted = encryptPrivateKey(privateKey, pin, salt);
+    const iv = crypto.randomBytes(12);
+
+    const { privateKey, publicKey } = crypto.generateKeyPairSync('ec', {
+      namedCurve: 'prime256v1'
+    });
+
+    const privDer = privateKey.export({ type: 'pkcs8', format: 'der' });
+    const encKey = crypto.scryptSync(pin, salt, 32, { N: 16384, r: 8, p: 1 });
+    const cipher = crypto.createCipheriv('aes-256-gcm', encKey, iv);
+    const ciphertext = Buffer.concat([cipher.update(privDer), cipher.final()]);
+    const authTag = cipher.getAuthTag();
+
+    privDer.fill(0);
+    encKey.fill(0);
+
     const pubHex = '0x' + publicKey.export({ type: 'spki', format: 'der' }).toString('hex');
 
     keystoreData[id] = {
       salt: salt.toString('hex'),
-      iv: encrypted.iv,
-      authTag: encrypted.authTag,
-      ciphertext: encrypted.ciphertext,
-      publicKey: pubHex
+      iv: iv.toString('hex'),
+      authTag: authTag.toString('hex'),
+      ciphertext: ciphertext.toString('hex'),
+      publicKey: pubHex,
+      generatedAt: new Date().toISOString()
     };
   }
 
@@ -172,6 +143,25 @@ export function signDigestWithDoctorPin(doctorId, pin, digest) {
     publicKey: entry.publicKey,
     algorithm: 'ECDSA_P256_SHA256'
   };
+}
+
+/**
+ * Direct ECDSA P-256 sign without scrypt key derivation (for benchmarking pure crypto speed)
+ */
+export function signDigestDirect(privateKeyObj, digest) {
+  const sign = crypto.createSign('SHA256');
+  sign.update(Buffer.isBuffer(digest) ? digest : Buffer.from(digest.replace(/^0x/, ''), 'hex'));
+  return '0x' + sign.sign(privateKeyObj, 'hex');
+}
+
+/**
+ * Unlocks a private key once and returns the KeyObject (for benchmark timing separation)
+ */
+export function unlockPrivateKey(doctorId, pin) {
+  const keystore = initKeystore();
+  const entry = keystore[doctorId];
+  if (!entry) throw new Error(`Doctor ID '${doctorId}' not found`);
+  return decryptPrivateKey(entry, pin);
 }
 
 /**

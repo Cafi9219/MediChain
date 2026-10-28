@@ -1,0 +1,6 @@
+corridor,origin,destination,ref_minutes,source,date,time_of_day,split
+AIIMS_to_Safdarjung,AIIMS New Delhi,Safdarjung Hospital (New Delhi),,Independent GPS Logs,2026-10-28,10:00,calibration
+AIIMS_to_GangaRam,AIIMS New Delhi,Sir Ganga Ram Hospital (New Delhi),,Independent GPS Logs,2026-10-28,11:30,calibration
+AIIMS_to_FMRI,AIIMS New Delhi,Fortis Memorial Research Institute (Gurugram),,Independent Highway Logs,2026-10-28,14:00,test
+PGIMER_to_AIIMS,PGIMER (Chandigarh),AIIMS New Delhi,,Independent Highway Logs,2026-10-28,09:15,calibration
+Apollo_to_Manipal,Apollo Hospital (Chennai),Manipal Hospital (Bengaluru),,Independent Highway Logs,2026-10-28,16:45,test
