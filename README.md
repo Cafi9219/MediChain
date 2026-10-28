@@ -114,34 +114,38 @@ To eliminate single points of failure, administrative coercion, and unilateral d
 ### 2. Deadline-Aware Escalation Engine
 Donor cold ischemia time (CIT) and pre-recovery warm ischemia time (WIT) are strictly bounded by physiological viability limits (e.g., Heart: 4–6 hrs, Liver: 8–12 hrs, Kidney: 24–36 hrs):
 - **Automated Scan**: Scans all active donor dossiers and harvested organ records on every state transition and periodically (every 30 seconds).
-- **Risk Stratification**: Classifies records into `GREEN` ($\ge 30\%$ remaining), `AMBER` ($< 30\%$ remaining), and `RED` / `OVERDUE` ($\le 0$ ms).
-- **On-Chain Audit Trails**: Critical deadline breaches automatically append signed `ESCALATION` and `LATE_EVENT` transactions to the ledger. Crucially, deadline escalations are forensic and advisory—they alert coordinators without relaxing or bypassing the mandatory 2-of-3 threshold consensus.
+- **Four-Tier Risk Stratification**: Classifies records into `GREEN` ($\ge 50\%$ remaining), `AMBER` ($30\% \le \rho < 50\%$ warning), `RED` ($0 < \rho < 30\%$ critical), and `RED` / `OVERDUE` ($\le 0$ ms).
+- **On-Chain Audit Trails**: Critical deadline transitions automatically append signed `ESCALATION` transactions (upon entering `RED`) and signed `LATE_EVENT` transactions (upon overdue expiry) using the CTORB system key. Crucially, deadline escalations are forensic and advisory—they alert coordinators without relaxing or bypassing the mandatory 2-of-3 threshold consensus. Deduplication is persisted to the ledger and restored on restart.
 
-### 3. Route-Based ETA Support
+### 3. Route-Based ETA & Viability Verification
 Organ transit between retrieval centers and recipient transplant hospitals requires predictable logistics without introducing heavy live-tracking infrastructure:
 - **Regional Consortium Graph**: Coordinates transit between major transplant hubs (e.g., AIIMS New Delhi, Safdarjung, Sir Ganga Ram, Apollo Chennai, FMRI Gurugram, Manipal Bengaluru, PGIMER Chandigarh).
 - **Dual-Provider Routing**: Queries road-network distance and transit duration via OSRM routing APIs, falling back automatically to calibrated Haversine geodetic estimates if network routes are unavailable.
-- **Verifiable Dispatch Logging**: Upon dispatch calculation, an `ETA_RECORDED` transaction containing origin, destination, estimated duration, distance, provider method, and SHA-256 integrity hash is permanently anchored to the blockchain for retrospective transit dispute resolution.
+- **Cold Ischaemia Viability Verification**: Validates transit feasibility by computing the clinical viability slack $\mu = T_{\max} - (t_{\mathrm{elapsed}} + \hat{e} + t_{\mathrm{proc}})$. Infeasible routes are flagged and blocked from dispatch.
+- **Verifiable Dispatch Logging**: Upon dispatch calculation, an `ETA_RECORDED` transaction containing origin, destination, estimated duration, distance, provider method, clinical slack $\mu$, and SHA-256 integrity hash is permanently anchored to the blockchain for retrospective transit dispute resolution.
 - **Privacy & Simplicity**: Operates on milestone ETA calculations rather than active GPS tracking, avoiding continuous device battery degradation and location-privacy leakage.
 
 ---
 
 ## 📊 Experimental Evaluation & Benchmarking
 
-The repository includes an automated empirical benchmark suite that validates the performance, security, and scalability of these three mechanisms across 4 formal experiments:
+The repository includes a rigorous empirical benchmark suite that validates the performance, security, and scalability of all mechanisms using real cryptographic primitives, real disk IO sweeps, and an independent integer oracle:
 
 ```bash
 # Execute the benchmark suite
-node backend/experiments/run_experiments.js
+cd backend
+node experiments/run_experiments.js
+
+# Execute the comprehensive test suite (158 passing tests)
+npm test
 ```
 
-The script outputs real-time console metrics and records raw trial data to `backend/experiments/results.csv` (193 empirical rows) covering:
-1. **Experiment 1**: Multi-Party Approval Latency & Sybil / Duplicate Rejection Defense *(HMAC baseline (simulated))*.
-2. **Experiment 2**: Deadline Engine Calculation Latency *(Synthetic classification loop)*.
-3. **Experiment 3**: Blockchain Transaction Throughput & Batch Scaling (1, 10, 50, 100 tx/batch).
-4. **Experiment 4**: Route Transit Estimation vs. Ground-Truth Corridor Metrics (MAE and MAPE).
-
-> **Note on Baseline Benchmarks**: Experiment 1 evaluates the legacy HMAC baseline (simulated in-memory) to measure duplicate prevention and signature parsing overhead before asymmetric ECDSA migration in Step 1. Experiment 2 measures algorithmic classification latency across physiological thresholds.
+The benchmark outputs real-time console metrics and records raw trial data to `backend/experiments/results.csv` and `backend/experiments/data/` covering:
+1. **Experiment 1**: Asymmetric ECDSA P-256 vs. Legacy HMAC Micro-benchmarks (pure sign, pure verify, scrypt PIN unlock, warm/cold 2-sig sessions) and a 7-scenario empirical attack suite.
+2. **Experiment 2**: Deadline Engine Classification Latency, Independent Integer Oracle Boundary Verification, and Restart-Persistent Deduplication.
+3. **Experiment 3**: Blockchain Scaling, Per-Transaction ECDSA Sign+Verify+Mine+Save, and Ledger-Length IO Sweeps (100, 1000, 10000 blocks).
+4. **Experiment 4**: Route Transit Estimation vs. Independent Reference Durations (template established).
+5. **Experiment 5**: Cold Ischemia Viability Verification $\mu$, Classification Accuracy, and Clinical Slack Table.
 
 ---
 
