@@ -1,0 +1,37 @@
+[
+  {
+    "origin": "AIIMS New Delhi",
+    "destination": "Safdarjung Hospital (New Delhi)",
+    "referenceDurationSeconds": 360,
+    "source": "Independent GPS / Traffic Monitoring Source",
+    "date": "2026-10-28"
+  },
+  {
+    "origin": "AIIMS New Delhi",
+    "destination": "Sir Ganga Ram Hospital (New Delhi)",
+    "referenceDurationSeconds": 1680,
+    "source": "Independent GPS / Traffic Monitoring Source",
+    "date": "2026-10-28"
+  },
+  {
+    "origin": "AIIMS New Delhi",
+    "destination": "Fortis Memorial Research Institute (Gurugram)",
+    "referenceDurationSeconds": 3120,
+    "source": "Independent GPS / Traffic Monitoring Source",
+    "date": "2026-10-28"
+  },
+  {
+    "origin": "PGIMER (Chandigarh)",
+    "destination": "AIIMS New Delhi",
+    "referenceDurationSeconds": 16500,
+    "source": "Independent Highway Transit Logs",
+    "date": "2026-10-28"
+  },
+  {
+    "origin": "Apollo Hospital (Chennai)",
+    "destination": "Manipal Hospital (Bengaluru)",
+    "referenceDurationSeconds": 22800,
+    "source": "Independent Highway Transit Logs",
+    "date": "2026-10-28"
+  }
+]
