@@ -2,10 +2,11 @@ import express from 'express';
 import crypto from 'crypto';
 import { ledger } from '../blockchain/blockchain.js';
 import { Transaction } from '../blockchain/transaction.js';
-import { sha256, generateDoctorSignature, verifyDoctorSignature } from '../blockchain/cryptoUtils.js';
+import { sha256 } from '../blockchain/cryptoUtils.js';
 import { CONSORTIUM_CREDENTIALS } from '../data/doctors.js';
 import { verifyDoctorPinSecure } from '../security/authSecurity.js';
 import { initOrganPersistence, saveOrgans } from '../data/persistence.js';
+import { processThresholdApproval } from '../security/thresholdApproval.js';
 
 const router = express.Router();
 
@@ -208,66 +209,43 @@ router.get('/list', (req, res) => {
 // POST /api/organs/reports/:reportId/sign - Surgeon Digital Signature (2 of 3 rule)
 router.post('/reports/:reportId/sign', (req, res) => {
   try {
-    const { doctorId, pin } = req.body;
+    const { doctorId, pin, signature, nonce } = req.body;
     const report = harvestReports.find(r => r.reportId === req.params.reportId);
 
     if (!report) {
       return res.status(404).json({ success: false, error: 'Harvest report not found.' });
     }
 
-    // Secure verification of specialist credentials & SROPS department membership
-    const authResult = verifyDoctorPinSecure(doctorId, pin, 'SROPS');
-    if (!authResult.success) {
-      return res.status(authResult.status || 401).json({ success: false, error: authResult.error });
-    }
-    const surgeon = authResult.doctor;
-
-    if (report.signatures.some(s => s.doctorId === surgeon.id)) {
-      return res.status(400).json({ success: false, error: `Dr. ${surgeon.name} has already signed this harvest report.` });
-    }
-
-    // Generate and verify cryptographic signature
-    const sig = generateDoctorSignature(surgeon.id, surgeon.name, report.reportHash);
-    const isSigValid = verifyDoctorSignature(surgeon.id, surgeon.name, report.reportHash, sig.signatureHash);
-    if (!isSigValid) {
-      return res.status(500).json({ success: false, error: 'Cryptographic signature verification failed.' });
-    }
-
-    report.signatures.push({
-      doctorId: surgeon.id,
-      doctorName: surgeon.name,
-      role: surgeon.role,
-      regNumber: surgeon.regNumber,
-      signatureHash: sig.signatureHash,
-      publicKey: sig.publicKey,
-      timestamp: sig.timestamp
+    const payloadBuilder = () => ({
+      reportId: report.reportId,
+      cadaverHexId: report.cadaverHexId,
+      totalOrgansExtracted: report.totalOrgansExtracted,
+      organs: (report.organs || []).map(o => ({
+        organName: o.organName,
+        organId: o.organId,
+        condition: o.condition
+      })),
+      createdAt: report.createdAt
     });
 
-    // Check 2-of-3 threshold
-    let blockMined = null;
-    if (report.signatures.length >= 2 && report.status === 'PENDING_SURGICAL_SIGNATURES') {
-      report.status = 'CERTIFIED_HARVEST';
+    const result = processThresholdApproval({
+      record: report,
+      recordId: report.reportId,
+      doctorId,
+      pin,
+      providedSignature: signature || null,
+      providedNonce: nonce || null,
+      dept: 'SROPS',
+      milestoneType: 'ORGAN_HARVEST_CERTIFIED_BLOCK',
+      payloadToSign: payloadBuilder(),
+      getLatestPayloadToCommit: payloadBuilder,
+      targetVerifiedStatus: 'CERTIFIED_HARVEST',
+      validatorNode: 'SROPS_SURGICAL_CONSORTIUM_NODE',
+      k: 2
+    });
 
-      // Create certified harvest transaction on blockchain
-      const certTx = new Transaction({
-        type: 'ORGAN_HARVEST_CERTIFIED_BLOCK',
-        payload: {
-          reportId: report.reportId,
-          cadaverHexId: report.cadaverHexId,
-          organsExtractedCount: report.totalOrgansExtracted,
-          organTokens: report.organs.map(o => `${o.organName} [${o.organId}]`),
-          status: 'CERTIFIED_HARVEST',
-          signingSurgeons: report.signatures.map(s => `${s.doctorName} (${s.doctorId})`),
-          digitalSignatures: report.signatures.map(s => s.signatureHash),
-          reportHash: report.reportHash
-        },
-        senderDepartment: 'SROPS',
-        submittedBy: surgeon.name,
-        signatures: report.signatures
-      });
-
-      ledger.addTransaction(certTx);
-      blockMined = ledger.minePendingTransactions('SROPS_SURGICAL_CONSORTIUM_NODE');
+    if (!result.success) {
+      return res.status(result.status || 400).json({ success: false, error: result.error });
     }
 
     // Persist changes to disk atomically
@@ -275,11 +253,11 @@ router.post('/reports/:reportId/sign', (req, res) => {
 
     res.json({
       success: true,
-      message: `Surgeon signature registered for Dr. ${surgeon.name}. Current signatures: ${report.signatures.length}/3.`,
-      signaturesCount: report.signatures.length,
-      status: report.status,
-      isFullyCertified: report.status === 'CERTIFIED_HARVEST',
-      blockMined: blockMined ? { index: blockMined.index, hash: blockMined.hash } : null,
+      message: result.message,
+      signaturesCount: result.signaturesCount,
+      status: result.status,
+      isFullyCertified: result.isFullyVerified,
+      blockMined: result.blockMined,
       report
     });
   } catch (err) {

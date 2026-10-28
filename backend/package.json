@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node tests/step0_security_reliability.test.js"
+    "test": "node tests/run_all_tests.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

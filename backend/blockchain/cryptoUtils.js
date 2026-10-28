@@ -1,4 +1,9 @@
 import crypto from 'crypto';
+import {
+  generateDoctorSignatureHmac,
+  verifyDoctorSignatureHmac,
+  LEGACY_SHARED_SECRET
+} from './legacyHmac.js';
 
 export function sha256(data) {
   const str = typeof data === 'string' ? data : JSON.stringify(data);
@@ -26,17 +31,7 @@ export function computeMerkleRoot(transactions) {
   return hashes[0];
 }
 
-export function generateDoctorSignature(doctorId, doctorName, dataHash, secret = 'CONSORTIUM_ORGAN_SECRET_2026') {
-  const payload = `${doctorId}:${doctorName}:${dataHash}`;
-  const sig = crypto.createHmac('sha256', secret).update(payload).digest('hex');
-  return {
-    signatureHash: '0x' + sig,
-    timestamp: new Date().toISOString(),
-    publicKey: 'PK_' + sha256(doctorId + doctorName).substring(0, 24)
-  };
-}
-
-export function verifyDoctorSignature(doctorId, doctorName, dataHash, signatureHash, secret = 'CONSORTIUM_ORGAN_SECRET_2026') {
-  const expected = '0x' + crypto.createHmac('sha256', secret).update(`${doctorId}:${doctorName}:${dataHash}`).digest('hex');
-  return expected === signatureHash;
-}
+// Re-export legacy HMAC mechanisms for Baseline B0 experiments
+export { generateDoctorSignatureHmac, verifyDoctorSignatureHmac, LEGACY_SHARED_SECRET };
+export const generateDoctorSignature = generateDoctorSignatureHmac;
+export const verifyDoctorSignature = verifyDoctorSignatureHmac;

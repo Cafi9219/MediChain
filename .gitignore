@@ -4,5 +4,6 @@ dist/
 *.log
 backend/data/cadavers.json*
 backend/data/organs.json*
+backend/data/keystore.json*
 backend/data/*.bak
 backend/data/*.tmp

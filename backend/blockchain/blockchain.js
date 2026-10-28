@@ -3,7 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { Block } from './block.js';
 import { Transaction } from './transaction.js';
-import { sha256 } from './cryptoUtils.js';
+import { sha256, computeMerkleRoot } from './cryptoUtils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -95,6 +95,35 @@ export class Blockchain {
         validatorNode: current.validatorNode,
         nonce: current.nonce
       });
+
+      // Verify transaction payload hashes
+      for (const tx of current.transactions) {
+        const expectedTxHash = (typeof tx.calculateHash === 'function')
+          ? tx.calculateHash()
+          : sha256({
+              id: tx.id,
+              type: tx.type,
+              payload: tx.payload,
+              senderDepartment: tx.senderDepartment,
+              submittedBy: tx.submittedBy,
+              signatures: tx.signatures,
+              timestamp: tx.timestamp
+            });
+        if (tx.hash && tx.hash !== expectedTxHash) {
+          return {
+            valid: false,
+            error: `Block #${current.index} transaction ${tx.id} payload tampered`
+          };
+        }
+      }
+
+      const recalculatedMerkle = computeMerkleRoot(current.transactions);
+      if (current.merkleRoot !== recalculatedMerkle) {
+        return {
+          valid: false,
+          error: `Block #${current.index} Merkle root mismatch`
+        };
+      }
 
       if (current.hash !== recalculatedHash) {
         return {

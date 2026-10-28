@@ -2,10 +2,11 @@ import express from 'express';
 import crypto from 'crypto';
 import { ledger } from '../blockchain/blockchain.js';
 import { Transaction } from '../blockchain/transaction.js';
-import { sha256, generateDoctorSignature, verifyDoctorSignature } from '../blockchain/cryptoUtils.js';
+import { sha256 } from '../blockchain/cryptoUtils.js';
 import { CONSORTIUM_CREDENTIALS } from '../data/doctors.js';
 import { verifyDoctorPinSecure } from '../security/authSecurity.js';
 import { initCadaverPersistence, saveCadavers } from '../data/persistence.js';
+import { processThresholdApproval } from '../security/thresholdApproval.js';
 
 const router = express.Router();
 
@@ -222,66 +223,40 @@ router.get('/:hexId', (req, res) => {
 // POST /api/cadavers/:hexId/sign - Doctor Digital Signature (2 of 3 rule)
 router.post('/:hexId/sign', (req, res) => {
   try {
-    const { doctorId, pin } = req.body;
+    const { doctorId, pin, signature, nonce } = req.body;
     const cadaver = cadaverRegistry.find(c => c.hexId.toUpperCase() === req.params.hexId.toUpperCase());
 
     if (!cadaver) {
       return res.status(404).json({ success: false, error: 'Cadaver record not found.' });
     }
 
-    // Secure verification of specialist credentials & CIFV department membership
-    const authResult = verifyDoctorPinSecure(doctorId, pin, 'CIFV');
-    if (!authResult.success) {
-      return res.status(authResult.status || 401).json({ success: false, error: authResult.error });
-    }
-    const doctor = authResult.doctor;
-
-    // Check if already signed by this doctor
-    if (cadaver.signatures.some(s => s.doctorId === doctor.id)) {
-      return res.status(400).json({ success: false, error: `Dr. ${doctor.name} has already signed this cadaver intake report.` });
-    }
-
-    // Generate cryptographic digital signature
-    const sig = generateDoctorSignature(doctor.id, doctor.name, cadaver.blockchainHash);
-    const isSigValid = verifyDoctorSignature(doctor.id, doctor.name, cadaver.blockchainHash, sig.signatureHash);
-    if (!isSigValid) {
-      return res.status(500).json({ success: false, error: 'Cryptographic signature verification failed.' });
-    }
-
-    cadaver.signatures.push({
-      doctorId: doctor.id,
-      doctorName: doctor.name,
-      role: doctor.role,
-      regNumber: doctor.regNumber,
-      signatureHash: sig.signatureHash,
-      publicKey: sig.publicKey,
-      timestamp: sig.timestamp
+    const payloadBuilder = () => ({
+      hexId: cadaver.hexId,
+      patientName: cadaver.patientName,
+      causeOfDeath: cadaver.causeOfDeath,
+      deathDate: cadaver.deathDate,
+      bloodGroup: cadaver.bloodGroup,
+      createdAt: cadaver.createdAt
     });
 
-    // Check 2-of-3 threshold
-    let blockMined = null;
-    if (cadaver.signatures.length >= 2 && cadaver.status === 'PENDING_INSPECTION_SIGNATURES') {
-      cadaver.status = 'VERIFIED_FOR_EXTRACTION';
+    const result = processThresholdApproval({
+      record: cadaver,
+      recordId: cadaver.hexId,
+      doctorId,
+      pin,
+      providedSignature: signature || null,
+      providedNonce: nonce || null,
+      dept: 'CIFV',
+      milestoneType: 'CADAVER_VERIFIED_BLOCK',
+      payloadToSign: payloadBuilder(),
+      getLatestPayloadToCommit: payloadBuilder,
+      targetVerifiedStatus: 'VERIFIED_FOR_EXTRACTION',
+      validatorNode: 'CIFV_CONSORTIUM_NODE',
+      k: 2
+    });
 
-      // Create on-chain transaction & mine block
-      const verifyTx = new Transaction({
-        type: 'CADAVER_VERIFIED_BLOCK',
-        payload: {
-          hexId: cadaver.hexId,
-          patientName: cadaver.patientName,
-          bloodGroup: cadaver.bloodGroup,
-          status: 'VERIFIED_FOR_EXTRACTION',
-          signingDoctors: cadaver.signatures.map(s => `${s.doctorName} (${s.doctorId})`),
-          digitalSignatures: cadaver.signatures.map(s => s.signatureHash),
-          recordHash: cadaver.blockchainHash
-        },
-        senderDepartment: 'CIFV',
-        submittedBy: doctor.name,
-        signatures: cadaver.signatures
-      });
-
-      ledger.addTransaction(verifyTx);
-      blockMined = ledger.minePendingTransactions('CIFV_CONSORTIUM_NODE');
+    if (!result.success) {
+      return res.status(result.status || 400).json({ success: false, error: result.error });
     }
 
     // Persist changes to disk atomically
@@ -289,11 +264,11 @@ router.post('/:hexId/sign', (req, res) => {
 
     res.json({
       success: true,
-      message: `Digital signature registered successfully for Dr. ${doctor.name}. Current signatures: ${cadaver.signatures.length}/3.`,
-      signaturesCount: cadaver.signatures.length,
-      status: cadaver.status,
-      isFullyVerified: cadaver.status === 'VERIFIED_FOR_EXTRACTION',
-      blockMined: blockMined ? { index: blockMined.index, hash: blockMined.hash } : null,
+      message: result.message,
+      signaturesCount: result.signaturesCount,
+      status: result.status,
+      isFullyVerified: result.isFullyVerified,
+      blockMined: result.blockMined,
       cadaver
     });
   } catch (err) {
