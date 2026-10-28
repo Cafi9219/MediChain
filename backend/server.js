@@ -6,6 +6,7 @@ import organRoutes, { getHarvestReports } from './routes/organRoutes.js';
 import blockchainRoutes from './routes/blockchainRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
 import deadlineRoutes from './routes/deadlineRoutes.js';
+import etaRoutes from './routes/etaRoutes.js';
 import { ledger } from './blockchain/blockchain.js';
 import { verifyStartupLedgerConsistency } from './data/persistence.js';
 import { scanAndEscalate } from './services/deadlineEngine.js';
@@ -48,6 +49,7 @@ app.use('/api/organs', organRoutes);
 app.use('/api/blockchain', blockchainRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/deadlines', deadlineRoutes);
+app.use('/api/eta', etaRoutes);
 
 // Health Check
 app.get('/api/health', (req, res) => {
