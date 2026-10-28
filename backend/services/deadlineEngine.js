@@ -1,5 +1,9 @@
 import { ledger } from '../blockchain/blockchain.js';
 import { Transaction } from '../blockchain/transaction.js';
+import { sha256 } from '../blockchain/cryptoUtils.js';
+import { signDigestWithSystemKey } from '../security/keystore.js';
+
+export const THETA_THRESHOLD = 0.30; // Critical escalation threshold (theta = 0.3)
 
 export const ORGAN_PRESERVATION_WINDOWS = {
   'Heart': 4,
@@ -28,7 +32,7 @@ export function resetClock() {
   currentClock = () => Date.now();
 }
 
-// In-memory escalation deduplication state: Set of `${recordId}:${windowKey}:${condition}`
+// In-memory escalation deduplication state: Set of `${recordId}:${windowKey}:${txType}`
 const escalationDedupeSet = new Set();
 
 /**
@@ -40,9 +44,10 @@ export function initializeDedupeFromLedger() {
   for (const block of ledger.chain) {
     for (const tx of block.transactions) {
       if ((tx.type === 'ESCALATION' || tx.type === 'LATE_EVENT') && tx.payload) {
-        const { recordId, windowKey, condition } = tx.payload;
-        if (recordId && windowKey && condition) {
-          escalationDedupeSet.add(`${recordId}:${windowKey}:${condition}`);
+        const { recordId, windowKey } = tx.payload;
+        const txType = tx.type;
+        if (recordId && windowKey && txType) {
+          escalationDedupeSet.add(`${recordId}:${windowKey}:${txType}`);
         }
       }
     }
@@ -64,8 +69,38 @@ function formatRemainingTime(ms) {
 }
 
 /**
+ * Classifies risk level strictly according to paper specification:
+ * - rho >= 0.5: GREEN
+ * - theta <= rho < 0.5: AMBER (approaching critical threshold)
+ * - 0 < rho < theta (theta = 0.30): RED (critical window, escalation required)
+ * - rho <= 0: RED / OVERDUE (deadline breached)
+ */
+export function classifyRisk(remainingMs, totalWindowMs, theta = THETA_THRESHOLD) {
+  if (totalWindowMs <= 0) {
+    return { riskLevel: 'RED', overdue: true, fractionRemaining: 0 };
+  }
+  const overdue = remainingMs <= 0;
+  const fractionRemaining = remainingMs / totalWindowMs;
+
+  let riskLevel = 'GREEN';
+  if (overdue) {
+    riskLevel = 'RED';
+  } else if (fractionRemaining < theta) {
+    riskLevel = 'RED'; // Enters RED prior to expiration when below theta
+  } else if (fractionRemaining < 0.50) {
+    riskLevel = 'AMBER';
+  }
+
+  return {
+    riskLevel,
+    overdue,
+    fractionRemaining: Number(Math.max(0, fractionRemaining).toFixed(4))
+  };
+}
+
+/**
  * Calculate active physiological deadlines across donor dossiers and harvested organs.
- * Matches the exact schema and risk categorization expected by the frontend.
+ * Matches the exact schema expected by the frontend.
  */
 export function calculateDeadlines(cadaverRegistry = [], harvestReports = []) {
   const now = currentClock();
@@ -84,12 +119,7 @@ export function calculateDeadlines(cadaverRegistry = [], harvestReports = []) {
       const totalWindowMs = windowHours * 3600 * 1000;
       const deadlineAtMs = startMs + totalWindowMs;
       const remainingMs = deadlineAtMs - now;
-      const fractionRemaining = Math.max(0, remainingMs / totalWindowMs);
-      const overdue = remainingMs <= 0;
-
-      let riskLevel = 'GREEN';
-      if (overdue || remainingMs <= 0) riskLevel = 'RED';
-      else if (fractionRemaining < 0.3) riskLevel = 'AMBER';
+      const { riskLevel, overdue, fractionRemaining } = classifyRisk(remainingMs, totalWindowMs);
 
       deadlineItems.push({
         recordId: cad.hexId,
@@ -101,9 +131,9 @@ export function calculateDeadlines(cadaverRegistry = [], harvestReports = []) {
         startTime: new Date(startMs).toISOString(),
         deadlineAt: new Date(deadlineAtMs).toISOString(),
         remainingMs,
-        remainingSeconds: Math.max(0, Math.floor(remainingMs / 1000)),
+        remainingSeconds: Math.floor(remainingMs / 1000),
         remainingFormatted: formatRemainingTime(remainingMs),
-        fractionRemaining: Number(fractionRemaining.toFixed(3)),
+        fractionRemaining,
         riskLevel,
         overdue,
         event: 'Forensic Intake Window',
@@ -128,12 +158,7 @@ export function calculateDeadlines(cadaverRegistry = [], harvestReports = []) {
         const totalWindowMs = windowHours * 3600 * 1000;
         const deadlineAtMs = startMs + totalWindowMs;
         const remainingMs = deadlineAtMs - now;
-        const fractionRemaining = Math.max(0, remainingMs / totalWindowMs);
-        const overdue = remainingMs <= 0;
-
-        let riskLevel = 'GREEN';
-        if (overdue || remainingMs <= 0) riskLevel = 'RED';
-        else if (fractionRemaining < 0.3) riskLevel = 'AMBER';
+        const { riskLevel, overdue, fractionRemaining } = classifyRisk(remainingMs, totalWindowMs);
 
         deadlineItems.push({
           recordId: org.organId,
@@ -145,9 +170,9 @@ export function calculateDeadlines(cadaverRegistry = [], harvestReports = []) {
           startTime: new Date(startMs).toISOString(),
           deadlineAt: new Date(deadlineAtMs).toISOString(),
           remainingMs,
-          remainingSeconds: Math.max(0, Math.floor(remainingMs / 1000)),
+          remainingSeconds: Math.floor(remainingMs / 1000),
           remainingFormatted: formatRemainingTime(remainingMs),
-          fractionRemaining: Number(fractionRemaining.toFixed(3)),
+          fractionRemaining,
           riskLevel,
           overdue,
           event: 'Cold Ischemia Window',
@@ -164,43 +189,73 @@ export function calculateDeadlines(cadaverRegistry = [], harvestReports = []) {
 
 /**
  * Scan active deadlines and automatically record on-chain ESCALATION or LATE_EVENT
- * audit transactions for overdue or critical thresholds.
+ * audit transactions with ECDSA P-256 signatures from CTORB system key.
  *
- * Enforces:
- * - Duplicate prevention via persistent ledger dedupe key
- * - Designated escalation target: CTORB_COORDINATOR
- * - Audit-only: Never modifies clinical record status, never bypasses 2-of-3 threshold
+ * Rules:
+ * - Entering RED (fraction < theta, not overdue): Appends signed ESCALATION transaction.
+ * - Overdue (remainingMs <= 0): Appends signed LATE_EVENT transaction.
+ * - Deduplication: Exactly one ESCALATION and/or one LATE_EVENT per record+windowKey.
+ * - Advisory only: Never modifies clinical record status, never lowers 2-of-3 threshold.
  */
 export function scanAndEscalate(cadaverRegistry = [], harvestReports = []) {
   const deadlines = calculateDeadlines(cadaverRegistry, harvestReports);
   const triggeredEvents = [];
 
   for (const item of deadlines) {
+    // Check if record has entered RED or is OVERDUE
     if (item.riskLevel === 'RED' || item.overdue) {
+      // Determine transaction type per research paper specification:
+      // - Overdue: LATE_EVENT
+      // - Enters RED (< theta, approaching critical deadline): ESCALATION
+      const txType = item.overdue ? 'LATE_EVENT' : 'ESCALATION';
       const condition = item.overdue ? 'OVERDUE_ISCHEMIA_BREACH' : 'CRITICAL_WINDOW_APPROACHING';
-      const dedupeKey = `${item.recordId}:${item.windowKey}:${condition}`;
+      const dedupeKey = `${item.recordId}:${item.windowKey}:${txType}`;
 
       if (!escalationDedupeSet.has(dedupeKey)) {
         escalationDedupeSet.add(dedupeKey);
 
-        const txType = item.overdue ? 'LATE_EVENT' : 'ESCALATION';
+        const payload = {
+          recordId: item.recordId,
+          label: item.label,
+          kind: item.kind,
+          windowKey: item.windowKey,
+          riskLevel: item.riskLevel,
+          overdue: item.overdue,
+          remainingMs: item.remainingMs,
+          fractionRemaining: item.fractionRemaining,
+          condition,
+          escalatedTo: 'CTORB_COORDINATOR',
+          deadlineAt: item.deadlineAt,
+          timestamp: new Date(currentClock()).toISOString()
+        };
+
+        const payloadHash = sha256(payload);
+
+        // Sign escalation transaction using CTORB system key (P-256 ECDSA)
+        let systemSignature;
+        try {
+          const sigRes = signDigestWithSystemKey(payloadHash);
+          systemSignature = {
+            signerId: 'CTORB-SYS-001',
+            role: 'CTORB_SYSTEM_COORDINATOR',
+            signature: sigRes.signature,
+            publicKey: sigRes.publicKey,
+            algorithm: 'ECDSA_P256_SHA256',
+            timestamp: payload.timestamp
+          };
+        } catch (err) {
+          systemSignature = {
+            signerId: 'CTORB-SYS-001',
+            error: err.message
+          };
+        }
+
         const escalationTx = new Transaction({
           type: txType,
-          payload: {
-            recordId: item.recordId,
-            label: item.label,
-            kind: item.kind,
-            windowKey: item.windowKey,
-            riskLevel: item.riskLevel,
-            overdue: item.overdue,
-            remainingMs: item.remainingMs,
-            condition,
-            escalatedTo: 'CTORB_COORDINATOR',
-            deadlineAt: item.deadlineAt,
-            timestamp: new Date(currentClock()).toISOString()
-          },
+          payload,
           senderDepartment: 'CTORB_ADMIN',
-          submittedBy: 'DEADLINE_ENGINE_DAEMON'
+          submittedBy: 'CTORB_SYSTEM_DAEMON',
+          signatures: [systemSignature]
         });
 
         ledger.addTransaction(escalationTx);
@@ -210,7 +265,8 @@ export function scanAndEscalate(cadaverRegistry = [], harvestReports = []) {
           txId: escalationTx.id,
           type: txType,
           recordId: item.recordId,
-          condition
+          condition,
+          signature: systemSignature.signature
         });
       }
     }

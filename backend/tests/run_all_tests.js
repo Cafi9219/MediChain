@@ -7,7 +7,8 @@ const __dirname = path.dirname(__filename);
 
 const testFiles = [
   'step0_security_reliability.test.js',
-  'step1_ecdsa_threshold.test.js'
+  'step1_ecdsa_threshold.test.js',
+  'step2_deadline_escalation.test.js'
 ];
 
 let totalFailed = 0;
