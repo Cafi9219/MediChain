@@ -1,0 +1,4 @@
+chain_length_blocks,save_latency_ms,file_size_kb
+100,2.2247,89.44
+1000,7.1045,897.16
+10000,72.9543,9000.67

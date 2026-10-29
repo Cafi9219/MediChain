@@ -1,0 +1,101 @@
+organ_type,elapsed_hours,corridor,mu_sec,system_infeasible,oracle_infeasible,match
+"Heart",0.5,"Local (AIIMS -> Safdarjung)",10760,false,false,true
+"Heart",0.5,"City (AIIMS -> FMRI Gurugram)",8928,false,false,true
+"Heart",0.5,"Regional (AIIMS -> PGIMER Chandigarh)",-14967,true,true,true
+"Heart",0.5,"Interstate (AIIMS -> Apollo Chennai)",-171487,true,true,true
+"Heart",2,"Local (AIIMS -> Safdarjung)",5360,false,false,true
+"Heart",2,"City (AIIMS -> FMRI Gurugram)",3528,false,false,true
+"Heart",2,"Regional (AIIMS -> PGIMER Chandigarh)",-20367,true,true,true
+"Heart",2,"Interstate (AIIMS -> Apollo Chennai)",-176887,true,true,true
+"Heart",4,"Local (AIIMS -> Safdarjung)",-1840,true,true,true
+"Heart",4,"City (AIIMS -> FMRI Gurugram)",-3672,true,true,true
+"Heart",4,"Regional (AIIMS -> PGIMER Chandigarh)",-27567,true,true,true
+"Heart",4,"Interstate (AIIMS -> Apollo Chennai)",-184087,true,true,true
+"Heart",7,"Local (AIIMS -> Safdarjung)",-12640,true,true,true
+"Heart",7,"City (AIIMS -> FMRI Gurugram)",-14472,true,true,true
+"Heart",7,"Regional (AIIMS -> PGIMER Chandigarh)",-38367,true,true,true
+"Heart",7,"Interstate (AIIMS -> Apollo Chennai)",-194887,true,true,true
+"Heart",20,"Local (AIIMS -> Safdarjung)",-59440,true,true,true
+"Heart",20,"City (AIIMS -> FMRI Gurugram)",-61272,true,true,true
+"Heart",20,"Regional (AIIMS -> PGIMER Chandigarh)",-85167,true,true,true
+"Heart",20,"Interstate (AIIMS -> Apollo Chennai)",-241687,true,true,true
+"Lung",0.5,"Local (AIIMS -> Safdarjung)",17960,false,false,true
+"Lung",0.5,"City (AIIMS -> FMRI Gurugram)",16128,false,false,true
+"Lung",0.5,"Regional (AIIMS -> PGIMER Chandigarh)",-7767,true,true,true
+"Lung",0.5,"Interstate (AIIMS -> Apollo Chennai)",-164287,true,true,true
+"Lung",2,"Local (AIIMS -> Safdarjung)",12560,false,false,true
+"Lung",2,"City (AIIMS -> FMRI Gurugram)",10728,false,false,true
+"Lung",2,"Regional (AIIMS -> PGIMER Chandigarh)",-13167,true,true,true
+"Lung",2,"Interstate (AIIMS -> Apollo Chennai)",-169687,true,true,true
+"Lung",4,"Local (AIIMS -> Safdarjung)",5360,false,false,true
+"Lung",4,"City (AIIMS -> FMRI Gurugram)",3528,false,false,true
+"Lung",4,"Regional (AIIMS -> PGIMER Chandigarh)",-20367,true,true,true
+"Lung",4,"Interstate (AIIMS -> Apollo Chennai)",-176887,true,true,true
+"Lung",7,"Local (AIIMS -> Safdarjung)",-5440,true,true,true
+"Lung",7,"City (AIIMS -> FMRI Gurugram)",-7272,true,true,true
+"Lung",7,"Regional (AIIMS -> PGIMER Chandigarh)",-31167,true,true,true
+"Lung",7,"Interstate (AIIMS -> Apollo Chennai)",-187687,true,true,true
+"Lung",20,"Local (AIIMS -> Safdarjung)",-52240,true,true,true
+"Lung",20,"City (AIIMS -> FMRI Gurugram)",-54072,true,true,true
+"Lung",20,"Regional (AIIMS -> PGIMER Chandigarh)",-77967,true,true,true
+"Lung",20,"Interstate (AIIMS -> Apollo Chennai)",-234487,true,true,true
+"Liver",0.5,"Local (AIIMS -> Safdarjung)",25160,false,false,true
+"Liver",0.5,"City (AIIMS -> FMRI Gurugram)",23328,false,false,true
+"Liver",0.5,"Regional (AIIMS -> PGIMER Chandigarh)",-567,true,true,true
+"Liver",0.5,"Interstate (AIIMS -> Apollo Chennai)",-157087,true,true,true
+"Liver",2,"Local (AIIMS -> Safdarjung)",19760,false,false,true
+"Liver",2,"City (AIIMS -> FMRI Gurugram)",17928,false,false,true
+"Liver",2,"Regional (AIIMS -> PGIMER Chandigarh)",-5967,true,true,true
+"Liver",2,"Interstate (AIIMS -> Apollo Chennai)",-162487,true,true,true
+"Liver",4,"Local (AIIMS -> Safdarjung)",12560,false,false,true
+"Liver",4,"City (AIIMS -> FMRI Gurugram)",10728,false,false,true
+"Liver",4,"Regional (AIIMS -> PGIMER Chandigarh)",-13167,true,true,true
+"Liver",4,"Interstate (AIIMS -> Apollo Chennai)",-169687,true,true,true
+"Liver",7,"Local (AIIMS -> Safdarjung)",1760,false,false,true
+"Liver",7,"City (AIIMS -> FMRI Gurugram)",-72,true,true,true
+"Liver",7,"Regional (AIIMS -> PGIMER Chandigarh)",-23967,true,true,true
+"Liver",7,"Interstate (AIIMS -> Apollo Chennai)",-180487,true,true,true
+"Liver",20,"Local (AIIMS -> Safdarjung)",-45040,true,true,true
+"Liver",20,"City (AIIMS -> FMRI Gurugram)",-46872,true,true,true
+"Liver",20,"Regional (AIIMS -> PGIMER Chandigarh)",-70767,true,true,true
+"Liver",20,"Interstate (AIIMS -> Apollo Chennai)",-227287,true,true,true
+"Kidney",0.5,"Local (AIIMS -> Safdarjung)",17960,false,false,true
+"Kidney",0.5,"City (AIIMS -> FMRI Gurugram)",16128,false,false,true
+"Kidney",0.5,"Regional (AIIMS -> PGIMER Chandigarh)",-7767,true,true,true
+"Kidney",0.5,"Interstate (AIIMS -> Apollo Chennai)",-164287,true,true,true
+"Kidney",2,"Local (AIIMS -> Safdarjung)",12560,false,false,true
+"Kidney",2,"City (AIIMS -> FMRI Gurugram)",10728,false,false,true
+"Kidney",2,"Regional (AIIMS -> PGIMER Chandigarh)",-13167,true,true,true
+"Kidney",2,"Interstate (AIIMS -> Apollo Chennai)",-169687,true,true,true
+"Kidney",4,"Local (AIIMS -> Safdarjung)",5360,false,false,true
+"Kidney",4,"City (AIIMS -> FMRI Gurugram)",3528,false,false,true
+"Kidney",4,"Regional (AIIMS -> PGIMER Chandigarh)",-20367,true,true,true
+"Kidney",4,"Interstate (AIIMS -> Apollo Chennai)",-176887,true,true,true
+"Kidney",7,"Local (AIIMS -> Safdarjung)",-5440,true,true,true
+"Kidney",7,"City (AIIMS -> FMRI Gurugram)",-7272,true,true,true
+"Kidney",7,"Regional (AIIMS -> PGIMER Chandigarh)",-31167,true,true,true
+"Kidney",7,"Interstate (AIIMS -> Apollo Chennai)",-187687,true,true,true
+"Kidney",20,"Local (AIIMS -> Safdarjung)",-52240,true,true,true
+"Kidney",20,"City (AIIMS -> FMRI Gurugram)",-54072,true,true,true
+"Kidney",20,"Regional (AIIMS -> PGIMER Chandigarh)",-77967,true,true,true
+"Kidney",20,"Interstate (AIIMS -> Apollo Chennai)",-234487,true,true,true
+"Cornea",0.5,"Local (AIIMS -> Safdarjung)",17960,false,false,true
+"Cornea",0.5,"City (AIIMS -> FMRI Gurugram)",16128,false,false,true
+"Cornea",0.5,"Regional (AIIMS -> PGIMER Chandigarh)",-7767,true,true,true
+"Cornea",0.5,"Interstate (AIIMS -> Apollo Chennai)",-164287,true,true,true
+"Cornea",2,"Local (AIIMS -> Safdarjung)",12560,false,false,true
+"Cornea",2,"City (AIIMS -> FMRI Gurugram)",10728,false,false,true
+"Cornea",2,"Regional (AIIMS -> PGIMER Chandigarh)",-13167,true,true,true
+"Cornea",2,"Interstate (AIIMS -> Apollo Chennai)",-169687,true,true,true
+"Cornea",4,"Local (AIIMS -> Safdarjung)",5360,false,false,true
+"Cornea",4,"City (AIIMS -> FMRI Gurugram)",3528,false,false,true
+"Cornea",4,"Regional (AIIMS -> PGIMER Chandigarh)",-20367,true,true,true
+"Cornea",4,"Interstate (AIIMS -> Apollo Chennai)",-176887,true,true,true
+"Cornea",7,"Local (AIIMS -> Safdarjung)",-5440,true,true,true
+"Cornea",7,"City (AIIMS -> FMRI Gurugram)",-7272,true,true,true
+"Cornea",7,"Regional (AIIMS -> PGIMER Chandigarh)",-31167,true,true,true
+"Cornea",7,"Interstate (AIIMS -> Apollo Chennai)",-187687,true,true,true
+"Cornea",20,"Local (AIIMS -> Safdarjung)",-52240,true,true,true
+"Cornea",20,"City (AIIMS -> FMRI Gurugram)",-54072,true,true,true
+"Cornea",20,"Regional (AIIMS -> PGIMER Chandigarh)",-77967,true,true,true
+"Cornea",20,"Interstate (AIIMS -> Apollo Chennai)",-234487,true,true,true

@@ -1,0 +1,35 @@
+experiment_id,experiment_name,trial,metric_name,metric_value,unit,verdict
+EXP1,Crypto_scrypt_Unlock,1,MeanLatency,26.5766,ms,PASS
+EXP1,Crypto_ECDSA_Sign,1,MeanLatency,0.0229,ms,PASS
+EXP1,Crypto_ECDSA_Verify,1,MeanLatency,0.1124,ms,PASS
+EXP1,Session_Warm_2Sig,1,MeanLatency,1.1935,ms,PASS
+EXP1,Session_Cold_2Sig,1,MeanLatency,142.3334,ms,PASS
+EXP1,Session_HMAC_2Sig,1,MeanLatency,0.0963,ms,PASS
+EXP1,AttackSuite_B0,1,RejectionRate,50,%,PASS
+EXP1,AttackSuite_B0,1,FalseAcceptRate,50,%,PASS
+EXP1,AttackSuite_B1,1,RejectionRate,50,%,PASS
+EXP1,AttackSuite_B1,1,FalseAcceptRate,50,%,PASS
+EXP1,AttackSuite_v1,1,RejectionRate,100,%,PASS
+EXP1,AttackSuite_v1,1,FalseAcceptRate,0,%,PASS
+EXP2,Classification_N10,1,MeanLatency,0.1356,ms,PASS
+EXP2,Classification_N100,1,MeanLatency,0.9927,ms,PASS
+EXP2,Classification_N1000,1,MeanLatency,6.0866,ms,PASS
+EXP2,Classification_N10000,1,MeanLatency,57.5254,ms,PASS
+EXP2,OracleVerification,1,rho >= 0.50 (Nominal),1,binary,PASS
+EXP2,OracleVerification,1,0.30 <= rho < 0.50 (Amber),1,binary,PASS
+EXP2,OracleVerification,1,rho = theta + eps (0.301),1,binary,PASS
+EXP2,OracleVerification,1,rho = theta - eps (0.299),1,binary,PASS
+EXP2,OracleVerification,1,rho = 0 + eps (0.001),1,binary,PASS
+EXP2,OracleVerification,1,rho = 0 - eps (-0.001),1,binary,PASS
+EXP2,RestartDeduplication,1,DuplicateEventsAfterRestart,0,count,PASS
+EXP3,SaveLatency_L100,1,SaveTime,2.2247,ms,PASS
+EXP3,LedgerSize_L100,1,FileSizeKB,89.44,KB,PASS
+EXP3,SaveLatency_L1000,1,SaveTime,7.1045,ms,PASS
+EXP3,LedgerSize_L1000,1,FileSizeKB,897.16,KB,PASS
+EXP3,SaveLatency_L10000,1,SaveTime,72.9543,ms,PASS
+EXP3,LedgerSize_L10000,1,FileSizeKB,9000.67,KB,PASS
+EXP3,Realistic_Throughput,1,EndToEndLatency,7.9709,ms,PASS
+EXP3,Realistic_Throughput,1,RealisticTPS,125.46,tx/s,PASS
+EXP5,ViabilityValidation,1,Precision,100,%,PASS
+EXP5,ViabilityValidation,1,Recall,100,%,PASS
+EXP5,ViabilityValidation,1,F1Score,1,score,PASS
