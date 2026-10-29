@@ -367,29 +367,48 @@ binds it to a session.
 
 \subsection{Deadline-aware escalation}
 Each tracked record has a start time $t_0$ and an organ-specific window
-$T_{\max}$ (heart 4\,h, lung 6\,h, liver 8\,h, small bowel 8\,h, pancreas 12\,h,
-kidney 24\,h, cornea 48\,h, intake inspection 6\,h; clinical guidelines: \cite{patil2026}).
-With $D=t_0+T_{\max}$ the remaining fraction is $\rho=(D-t)/T_{\max}$. The engine
-implements a four-tier risk classification:
+$T_{\max}$ configured in the system: heart 4\,h, lung 6\,h, liver 8\,h,
+small bowel 8\,h, pancreas 12\,h, kidney 24\,h, cornea 48\,h, and cadaver
+forensic inspection 6\,h. The solid-organ preservation windows for heart ($\le 4$\,h),
+lung ($\le 6$\,h), liver ($\le 8$\,h), pancreas ($\le 12$\,h), and kidney
+($\le 24$\,h) reflect standard clinical guidelines for static cold ischaemic
+preservation \cite{patil2026}.
+\todo{Author review: verify primary clinical citations for small bowel ($\le 8$\,h mucosal tolerance limit), corneal procurement window (48\,h in prototype configuration vs.\ 12--24\,h death-to-preservation standard in eye-banking guidelines), and institutional protocol basis for the 6\,h forensic intake inspection window.}
+
+With $D = t_0 + T_{\max}$, the time remaining until deadline expiration is $D - t$,
+and the remaining fraction of the preservation window is $\rho = (D - t) / T_{\max}$.
+The engine evaluates $\rho$ across four discrete risk tiers:
 \begin{equation}
 \mathrm{status}=
 \begin{cases}
 \textsc{green} & \rho \ge 0.50,\\
 \textsc{amber} & 0.30 \le \rho < 0.50,\\
-\textsc{red} & 0 < \rho < 0.30 \quad (\text{emits \texttt{ESCALATION}}),\\
-\textsc{overdue} & \rho \le 0 \quad (\text{emits \texttt{LATE\_EVENT}}).
+\textsc{red} & 0 < \rho < 0.30 \quad (\text{emits signed \texttt{ESCALATION}}),\\
+\textsc{overdue} & \rho \le 0 \quad (\text{emits signed \texttt{LATE\_EVENT}}).
 \end{cases}
 \end{equation}
-The engine scans every state transition and periodically every $\Delta=30$\,s.
-Upon entering \textsc{red} ($0 < \rho < 0.30$), it appends a signed \texttt{ESCALATION}
-transaction to alert the regulatory coordinator (\ctorb). If a milestone completes
-after the deadline expires ($\rho \le 0$), a signed \texttt{LATE\_EVENT} transaction
-is recorded. Transactions are deduplicated on-chain using a composite key
-$(\texttt{recordId}, \texttt{windowKey}, \texttt{condition})$, with deduplication
-state dynamically reconstructed from ledger blocks on restart to prevent duplicate
-records. Escalation is strictly advisory: it flags delays without lowering the
-$2$-of-$3$ specialist threshold. With a periodic scan $\Delta=30$\,s, detection
-delay is bounded by $\delta \le \Delta + \tau_{\mathrm{tx}}$, where $\tau_{\mathrm{tx}}$
+Crucially, these tiers represent administrative deadline and escalation alert
+states within the consortium workflow; they track temporal progression against
+pre-configured limits but do not independently establish physiological organ viability
+or graft quality, which requires comprehensive clinical evaluation (e.g., donor hemodynamics,
+perfusion markers, warm ischaemia injury, and transit slack $\mu$ as formulated in Eq.~\ref{eq:viab}).
+
+The boundary conditions are enforced as follows:
+\begin{itemize}
+  \item $\rho \ge 0.50$: Nominal status (\textsc{green}); no alert is dispatched.
+  \item $0.30 \le \rho < 0.50$: Warning status (\textsc{amber}); the record approaches critical threshold $\theta = 0.30$.
+  \item $0 < \rho < 0.30$: Critical status (\textsc{red}); the remaining window has fallen strictly below $\theta = 0.30$ while time remains ($D > t$). The engine appends a signed \texttt{ESCALATION} transaction to alert the regulatory coordinator (\ctorb).
+  \item $\rho \le 0$: Overdue status (\textsc{overdue}); the deadline has elapsed ($t \ge D$). If the milestone completes while overdue, a signed \texttt{LATE\_EVENT} transaction is recorded on the ledger.
+\end{itemize}
+
+The engine scans every state transition and periodically every $\Delta = 30$\,s.
+Escalation and late-event transactions are deduplicated on-chain using the composite
+key $(\texttt{recordId}, \texttt{windowKey}, \texttt{txType})$, with deduplication
+state dynamically reconstructed from ledger blocks on restart to prevent redundant
+records. Escalation is strictly advisory: it alerts coordinators to impending or
+actual breaches without relaxing or lowering the mandatory $2$-of-$3$ specialist
+approval threshold. With periodic scanning every $\Delta = 30$\,s, detection delay
+is bounded by $\delta \le \Delta + \tau_{\mathrm{tx}}$, where $\tau_{\mathrm{tx}}$
 is the transaction sealing latency.
 
 \begin{figure}[t]
