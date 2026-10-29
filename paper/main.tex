@@ -765,8 +765,8 @@ Work & Reported metric & \mc{} counterpart \\
 \section{Discussion}\label{sec:discussion}
 \paragraph*{What the evidence supports.}
 Individual-key signatures change the outcome of three attack classes at a
-latency that is small in absolute terms (about 0.2\,ms per session) but large
-in ratio; the deadline engine classifies correctly and deduplicates as
+latency that is small in absolute terms (about 1.19\,ms warm session latency) but large
+in ratio; the deadline engine classifies correctly across all boundaries and deduplicates as
 specified; and the structural rules of the $2$-of-$3$ gate hold in both
 schemes. The audit is the more consequential result: a green test suite and
 a working tamper demonstration coexisted with a validator that cannot see
@@ -776,28 +776,39 @@ domain binding and the evaluation, not the primitive.
 
 \paragraph*{Limitations.}
 (i) Single machine, single node: evaluates single-host execution without network consensus
-overhead or multi-node Byzantine partition faults. (ii) Keys are encrypted at rest
-via AES-256-GCM using scrypt derivation from doctor PINs, but cryptographic signing
-is executed on the API server rather than on end-user hardware HSMs or WebAuthn client tokens.
-(iii) The 7-scenario attack suite is a structured test harness, not an adversarial game-theoretic
-proof. (iv) E4 awaits external reference road transit dataset calibration.
-(v) File rewrite costs scale linearly with ledger length in the current prototype; production
-systems require append-only databases or LSM-tree storage engines. (vi) Clinical
-preservation windows and packaging allowances ($t_{\mathrm{proc}}$) are configuration parameters
-requiring regional medical consensus \cite{patil2026}. (vii) Two colluding specialists of one
-department satisfy the $2$-of-$3$ gate by design. (viii) Biometrics and surgical photographs
-reside in off-chain file storage, with the ledger storing cryptographic SHA-256 commitments only.
+overhead or multi-node Byzantine partition faults. (ii) Signing architecture: specialist private
+keys are encrypted at rest via AES-256-GCM using scrypt derivation from doctor PINs, but
+cryptographic signing is executed on the API server upon PIN unlock rather than on end-user
+hardware HSMs or client-side WebAuthn tokens. (iii) The 7-scenario attack suite is a structured
+test harness, not an adversarial game-theoretic proof. (iv) Route transit accuracy (E4) is currently
+not measured against empirical ground truth, as independent reference-duration datasets have
+not been collected; no MAE or MAPE accuracy claims are made. (v) File rewrite costs scale
+linearly with ledger length in the current prototype (2.22\,ms at 100 blocks to 72.95\,ms at
+$10^4$ blocks); production systems require append-only databases or LSM-tree storage engines.
+(vi) The viability rule (Eq.~\ref{eq:viab}), organ-specific windows $T_{\max}$, and packaging
+allowance $t_{\mathrm{proc}}$ are pre-configured operational parameters and have not been
+clinically validated in patient trials.
+\todo{Author review: Provide primary clinical citations for small bowel, cornea, and $t_{\mathrm{proc}}$ allowances; the cited literature does not establish medical validity of the prototype dispatch logic.}
+(vii) Two colluding specialists of one department satisfy the $2$-of-$3$ gate by design.
+(viii) Doctor verification on \texttt{POST /api/auth/verify-doctor} treats CAPTCHA as optional
+(checked only if tokens are supplied), whereas \texttt{/login} is mandatory. (ix) Biometrics and
+surgical photographs reside in off-chain file storage, with the ledger storing cryptographic
+SHA-256 commitments only. (x) Donor--recipient matching, organ allocation scoring, and the
+recipient hospital delivery handshake (RTCN) are outside the prototype's implemented scope.
 
 \paragraph*{Threats to validity.}
-Timings depend on the host hardware (Intel Core i5-13420H); synthetic donor records
-stand in for live clinical patients; and comparisons with literature architectures
+Timings depend on the host hardware (Intel Core i5-13420H, 15.68\,GB RAM); synthetic donor
+records stand in for live clinical patients; and comparisons with literature architectures
 are qualitative due to distinct smart-contract platforms.
 
 \paragraph*{Future work.}
-Integrate client-side WebAuthn/FIDO2 hardware signature generation; migrate the
-ledger persistence layer from whole-file JSON serialization to an ACID database;
-evaluate multi-node BFT consensus orderers \cite{pbft1999}; and deploy dynamic
-traffic monitoring for live route transit recalculation.
+Proposed future work—distinct from the implemented prototype—includes: enforcing mandatory
+CAPTCHA across all authentication routes; migrating the ledger persistence layer from whole-file
+JSON serialization to an incremental ACID append-only database; integrating client-side WebAuthn/FIDO2
+hardware signature devices to eliminate server-side key custody; evaluating multi-node BFT
+consensus orderers \cite{pbft1999}; deploying dynamic traffic monitoring for real-time transit
+recalculation; and conducting formal clinical validation of preservation thresholds with medical
+ethics boards.
 
 % ---------------------------------------------------------------------
 \section{Conclusion}\label{sec:conclusion}
@@ -816,6 +827,9 @@ is bounded by synchronous disk IO and asymmetric signing at 125.5\,tx/s, with
 ledger serialization latency scaling from 2.22\,ms at 100 blocks to 72.95\,ms at
 $10^4$ blocks; and (5) the routing and viability pipeline enforces cold ischaemia
 constraints $\mu$, anchoring certified dispatches to \texttt{ETA\_RECORDED} blocks.
+We emphasize that route transit accuracy remains unmeasured awaiting external
+reference datasets, and the viability rule is an administrative decision model
+that has not been clinically validated.
 
 \section*{Data and Code Availability}\label{sec:avail}
 All benchmark suites, test harnesses, and raw empirical CSV datasets are preserved
