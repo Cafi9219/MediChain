@@ -368,12 +368,18 @@ binds it to a session.
 \subsection{Deadline-aware escalation}
 Each tracked record has a start time $t_0$ and an organ-specific window
 $T_{\max}$ configured in the system: heart 4\,h, lung 6\,h, liver 8\,h,
-small bowel 8\,h, pancreas 12\,h, kidney 24\,h, cornea 48\,h, and cadaver
-forensic inspection 6\,h. The solid-organ preservation windows for heart ($\le 4$\,h),
-lung ($\le 6$\,h), liver ($\le 8$\,h), pancreas ($\le 12$\,h), and kidney
-($\le 24$\,h) reflect standard clinical guidelines for static cold ischaemic
-preservation \cite{patil2026}.
-\todo{Author review: verify primary clinical citations for small bowel ($\le 8$\,h mucosal tolerance limit), corneal procurement window (48\,h in prototype configuration vs.\ 12--24\,h death-to-preservation standard in eye-banking guidelines), and institutional protocol basis for the 6\,h forensic intake inspection window.}
+small bowel 8\,h, pancreas 12\,h, kidney 24\,h (left and right), cornea 48\,h,
+and cadaver forensic intake inspection 6\,h. For any recovered organ whose
+type is unspecified or unrecognised in the recovery report, the engine applies
+a default fallback window of 12\,h (\texttt{ORGAN\_PRESERVATION\_WINDOWS[organName] || 12}).
+Similarly, if unconfigured, the cadaver intake inspection window defaults to 6\,h.
+The configured solid-organ windows (heart $\le 4$\,h, lung $\le 6$\,h, liver $\le 8$\,h,
+pancreas $\le 12$\,h, kidney $\le 24$\,h) align with commonly reported static cold
+storage operational targets in transplantation practice. However, because static
+cold ischaemia tolerance depends heavily on donor criteria, perfusion solutions,
+and recovery protocols, and because primary surgical sources must directly substantiate
+each window:
+\todo{Author review: Provide primary clinical citations for specific cold ischaemic preservation windows (heart $\le 4$\,h, lung $\le 6$\,h, liver $\le 8$\,h, pancreas $\le 12$\,h, kidney $\le 24$\,h, small bowel $\le 8$\,h, cornea 48\,h) and institutional protocol justification for the 6\,h intake inspection and 12\,h unlisted-organ fallback window. The citation \cite{patil2026} is retained for broad transplantation logistics challenges and technological bottlenecks (Sec.~\ref{sec:related}), but does not establish primary organ-specific cold ischaemia thresholds.}
 
 With $D = t_0 + T_{\max}$, the time remaining until deadline expiration is $D - t$,
 and the remaining fraction of the preservation window is $\rho = (D - t) / T_{\max}$.
@@ -387,28 +393,30 @@ The engine evaluates $\rho$ across four discrete risk tiers:
 \textsc{overdue} & \rho \le 0 \quad (\text{emits signed \texttt{LATE\_EVENT}}).
 \end{cases}
 \end{equation}
-Crucially, these tiers represent administrative deadline and escalation alert
-states within the consortium workflow; they track temporal progression against
-pre-configured limits but do not independently establish physiological organ viability
-or graft quality, which requires comprehensive clinical evaluation (e.g., donor hemodynamics,
-perfusion markers, warm ischaemia injury, and transit slack $\mu$ as formulated in Eq.~\ref{eq:viab}).
+Crucially, these four tiers represent workflow monitoring and administrative
+escalation alerts within the consortium ledger; they track temporal decay against
+pre-configured operational milestones but do not independently establish physiological
+organ viability, graft quality, or cellular integrity. Clinical viability is a
+multi-factorial medical determination that requires direct surgeon assessment,
+donor hemodynamic history, biomarker evaluations, and route transit feasibility
+(as formulated in Eq.~\ref{eq:viab}).
 
-The boundary conditions are enforced as follows:
+The boundary conditions implemented in the classification logic are:
 \begin{itemize}
-  \item $\rho \ge 0.50$: Nominal status (\textsc{green}); no alert is dispatched.
-  \item $0.30 \le \rho < 0.50$: Warning status (\textsc{amber}); the record approaches critical threshold $\theta = 0.30$.
-  \item $0 < \rho < 0.30$: Critical status (\textsc{red}); the remaining window has fallen strictly below $\theta = 0.30$ while time remains ($D > t$). The engine appends a signed \texttt{ESCALATION} transaction to alert the regulatory coordinator (\ctorb).
-  \item $\rho \le 0$: Overdue status (\textsc{overdue}); the deadline has elapsed ($t \ge D$). If the milestone completes while overdue, a signed \texttt{LATE\_EVENT} transaction is recorded on the ledger.
+  \item $\rho \ge 0.50$: Nominal status (\textsc{green}); no alert or transaction is generated.
+  \item $0.30 \le \rho < 0.50$: Warning status (\textsc{amber}); alerts that the record is approaching the critical escalation threshold $\theta = 0.30$.
+  \item $0 < \rho < 0.30$: Critical status (\textsc{red}); remaining window has fallen strictly below $\theta = 0.30$ while positive time remains ($D > t$). The engine appends a signed \texttt{ESCALATION} transaction to alert the regulatory coordinator (\ctorb).
+  \item $\rho \le 0$: Overdue status (\textsc{overdue}); the deadline has expired ($t \ge D$). Upon milestone completion while overdue, a signed \texttt{LATE\_EVENT} transaction is recorded on the ledger.
 \end{itemize}
 
-The engine scans every state transition and periodically every $\Delta = 30$\,s.
+The engine executes on every state transition and periodically every $\Delta = 30$\,s.
 Escalation and late-event transactions are deduplicated on-chain using the composite
 key $(\texttt{recordId}, \texttt{windowKey}, \texttt{txType})$, with deduplication
-state dynamically reconstructed from ledger blocks on restart to prevent redundant
-records. Escalation is strictly advisory: it alerts coordinators to impending or
-actual breaches without relaxing or lowering the mandatory $2$-of-$3$ specialist
-approval threshold. With periodic scanning every $\Delta = 30$\,s, detection delay
-is bounded by $\delta \le \Delta + \tau_{\mathrm{tx}}$, where $\tau_{\mathrm{tx}}$
+state dynamically reconstructed from existing ledger blocks upon server startup
+to ensure restart-persistent deduplication. Escalation is strictly advisory: it
+records non-repudiable audit logs of delays without relaxing or bypassing the
+mandatory $2$-of-$3$ specialist threshold. With periodic scanning every $\Delta = 30$\,s,
+detection delay is bounded by $\delta \le \Delta + \tau_{\mathrm{tx}}$, where $\tau_{\mathrm{tx}}$
 is the transaction sealing latency.
 
 \begin{figure}[t]
